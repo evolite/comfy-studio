@@ -1,6 +1,6 @@
 import { ReactNode, RefObject, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { api, byCategory, expandVoice, LoraEntry, LoraKind, Stage, voiceSlotsIn, VoiceSlot } from "./api";
+import { api, byCategory, expandVoice, LoraEntry, LoraKind, Stage, VoiceCast, voiceSlotsIn, VoiceSlot, voiceUsesIn } from "./api";
 import { useLoras, useProject, useRegistry, useVoices } from "./hooks";
 import { SampleButton } from "./Voices";
 import MusicPicker, { fitLabel, useFit, beatLabel } from "./Music";
@@ -178,7 +178,18 @@ export default function StageDrawer({ project, stage, stages, onClose, onNav, in
   const voice = voiceName ? voiceLib?.voices[voiceName] : undefined;
   const motion = draft.motion ?? "";
   const usedSlots = voiceSlotsIn(motion);
-  const voiceGaps = usedSlots.filter((k) => !voice?.[k]?.trim());
+  // other speakers' voices ({"S2": name}, stage else project); a speaker without one uses S1's
+  const castNames: Record<string, string> = { ...(projCfg?.voices ?? {}), ...(draft.voices ?? {}), ...(voiceName ? { S1: voiceName } : {}) };
+  const cast: VoiceCast = Object.fromEntries(Object.entries(castNames).map(([sp, n]) => [sp, voiceLib?.voices[n]]));
+  const s2Name = castNames.S2 ?? "";
+  const nameOf = (sp: string) => castNames[sp] ?? voiceName;
+  const voiceGaps = [...new Set(voiceUsesIn(motion).filter(({ slot, speaker }) => !(cast[speaker] ?? cast.S1)?.[slot]?.trim())
+    .map(({ slot, speaker }) => `${nameOf(speaker) || speaker}: ${slot}`))];
+  const setS2 = (n: string) => {
+    const rest = Object.fromEntries(Object.entries(draft.voices ?? {}).filter(([k]) => k !== "S2"));
+    const next = n ? { ...rest, S2: n } : rest;
+    set("voices", Object.keys(next).length ? next : null);
+  };
   const insertSlot = (k: VoiceSlot) => {
     const t = motionRef.current, ph = k === "voice" ? "{voice}" : `{voice.${k}}`;
     const at = t?.selectionStart ?? motion.length, end = t?.selectionEnd ?? at;
@@ -194,8 +205,8 @@ export default function StageDrawer({ project, stage, stages, onClose, onNav, in
       ))}
       {usedSlots.length > 0 && !voiceName && <div className="warnline">⚠ the motion uses voice slots but no voice is set (pick one below, or the project's in ⚙ Settings → Animate); animate refuses it</div>}
       {voiceName && !voice && voiceLib && <div className="warnline">⚠ no voice {voiceName} in the library</div>}
-      {voice && voiceGaps.length > 0 && <div className="warnline">⚠ {voiceName} has no {voiceGaps.join(", ")}: fill it in the voice library or drop the slot</div>}
-      {voice && usedSlots.length > 0 && voiceGaps.length === 0 && <details><summary className="dim">as animated ({voice.label || voiceName})</summary><div className="ltips">{expandVoice(motion, voice)}</div></details>}
+      {voice && voiceGaps.length > 0 && <div className="warnline">⚠ missing voice slots ({voiceGaps.join(", ")}): fill them in the voice library or drop the slot</div>}
+      {voice && usedSlots.length > 0 && voiceGaps.length === 0 && <details><summary className="dim">as animated ({voice.label || voiceName}{s2Name ? ` + S2 ${voiceLib?.voices[s2Name]?.label ?? s2Name}` : ""})</summary><div className="ltips">{expandVoice(motion, cast)}</div></details>}
     </div>
   );
   const motionHint = (motionTips.length > 0 || vtrig.length > 0 || motionCombos.length > 0) && (
@@ -284,6 +295,12 @@ export default function StageDrawer({ project, stage, stages, onClose, onNav, in
           <select value={draft.voice ?? ""} onChange={(e) => set("voice", e.target.value || null)}>
             <option value="">{projCfg?.voice ? `project (${voiceLib?.voices[projCfg.voice]?.label ?? projCfg.voice})` : "none"}</option>
             {Object.entries(voiceLib?.voices ?? {}).filter(([k, v]) => !v.disabled || k === draft.voice).map(([k, v]) => <option key={k} value={k}>{v.label || k}</option>)}
+          </select>
+        </label>
+        <label className="field" title="a second speaker's voice: fills the motion's {voice...:S2} slots (empty = S1's voice)"><span>S2 voice</span>
+          <select value={draft.voices?.S2 ?? ""} onChange={(e) => setS2(e.target.value)}>
+            <option value="">{projCfg?.voices?.S2 ? `project (${voiceLib?.voices[projCfg.voices.S2]?.label ?? projCfg.voices.S2})` : "same as voice"}</option>
+            {Object.entries(voiceLib?.voices ?? {}).filter(([k, v]) => !v.disabled || k === draft.voices?.S2).map(([k, v]) => <option key={k} value={k}>{v.label || k}</option>)}
           </select>
         </label>
         {voice && <SampleButton e={voice} />}

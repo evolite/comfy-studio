@@ -14,7 +14,8 @@ Slots (prompt fragments, written to read in place):
 (<project>/<folder>/videos/stage_<stage>.mp4; folder "" = the project root).
 
 A motion uses the slots as placeholders: {voice}, {voice.delivery}, {voice.moans}, {voice.sound} (optionally :Sn). The voice is the stage's
-`voice`, else the project's top-level `voice`. expand() fills them in when the clip is animated (project.py writes the expanded
+`voice`, else the project's top-level `voice`; a second speaker gets its own with `voices` ({"S2": name}, stage or project level, the
+stage's wins), which fills that speaker's :S2 slots (a speaker without an entry uses the S1 voice). expand() fills them in when the clip is animated (project.py writes the expanded
 text to _debug/motion_prompts.json); a motion without placeholders is left as it is.
 """
 import json
@@ -84,32 +85,67 @@ def voice_of(stage: dict, cfg: dict):
     return stage.get("voice") or cfg.get("voice") or None
 
 
-def problems(motion: str, name, voices: dict = None) -> list:
-    """Why expand() would refuse this motion with this voice ([] = it expands)."""
-    used = {m.group(1) or "voice" for m in PLACEHOLDER.finditer(motion or "")}
+SPEAKER_KEY = re.compile(r"^S([2-9]|[1-9]\d+)$")
+
+
+def cast_of(stage: dict, cfg: dict) -> dict:
+    """{speaker: voice name} for a stage: S1 = voice_of(); other speakers from `voices` ({"S2": name}), the stage's entry winning
+    over the project's. A {voice...:Sn} slot whose speaker has no entry uses S1's voice."""
+    cast = {k: v for k, v in {**(cfg.get("voices") or {}), **(stage.get("voices") or {})}.items() if v}
+    if name := voice_of(stage, cfg):
+        cast["S1"] = name
+    return cast
+
+
+def check_cast(value, label: str, voices: dict = None) -> None:
+    """Raises ValueError unless `value` is a valid `voices` field ({"S2": name, ...}; S1 is `voice`)."""
+    if value is None:
+        return
+    if not isinstance(value, dict):
+        raise ValueError(f'{label}: voices must be an object like {{"S2": "<voice>"}}')
     voices = load()["voices"] if voices is None else voices
-    if name and name not in voices:
-        return [f"no voice {name!r} in the voice library"]
-    if not used:
-        return []
-    if not name:
-        return [f"the motion uses {', '.join(sorted('{voice}' if s == 'voice' else '{voice.' + s + '}' for s in used))} but no voice is set "
+    for sp, name in value.items():
+        if not isinstance(sp, str) or not SPEAKER_KEY.match(sp):
+            raise ValueError(f"{label}: voices keys are speakers S2, S3, ... (S1 is `voice`), not {sp!r}")
+        if name and name not in voices:
+            raise ValueError(f"{label}: no voice {name!r} in the voice library")
+
+
+def _cast(cast) -> dict:
+    return {"S1": cast} if isinstance(cast, str) else {k: v for k, v in (cast or {}).items() if v}
+
+
+def _pick(cast: dict, speaker):
+    return cast.get(speaker or "S1") or cast.get("S1")
+
+
+def problems(motion: str, cast, voices: dict = None) -> list:
+    """Why expand() would refuse this motion with this cast ([] = it expands). `cast` = a voice name (every speaker) or
+    {speaker: name} (cast_of())."""
+    cast = _cast(cast)
+    voices = load()["voices"] if voices is None else voices
+    unknown = [f"no voice {n!r} in the voice library" for n in dict.fromkeys(cast.values()) if n not in voices]
+    if unknown:
+        return unknown
+    used = [(m.group(1) or "voice", m.group(2)) for m in PLACEHOLDER.finditer(motion or "")]
+    unset = sorted({s for s, sp in used if not _pick(cast, sp)}, key=SLOTS.index)
+    if unset:
+        return [f"the motion uses {', '.join('{voice}' if s == 'voice' else '{voice.' + s + '}' for s in unset)} but no voice is set "
                 f"(pick one for the stage or the project)"]
-    missing = [s for s in SLOTS if s in used and not (voices[name].get(s) or "").strip()]
-    return [f"voice {name!r} has no `{s}` for {{voice.{s}}}" for s in missing]
+    gaps = {(_pick(cast, sp), s) for s, sp in used if not (voices[_pick(cast, sp)].get(s) or "").strip()}
+    return [f"voice {n!r} has no `{s}` for {{voice.{s}}}" for n, s in sorted(gaps, key=lambda g: (g[0], SLOTS.index(g[1])))]
 
 
-def expand(motion: str, name, label: str = "", voices: dict = None) -> str:
-    """The motion with its {voice...} placeholders filled from the named voice; exits (before anything is spent) when one
-    can't be filled."""
+def expand(motion: str, cast, label: str = "", voices: dict = None) -> str:
+    """The motion with its {voice...} placeholders filled from the cast (a voice name, or {speaker: name}: a :Sn slot takes
+    that speaker's voice, else S1's); exits (before anything is spent) when one can't be filled."""
     voices = load()["voices"] if voices is None else voices
-    bad = problems(motion, name, voices)
+    bad = problems(motion, cast, voices)
     if bad:
         sys.exit(f"{label + ': ' if label else ''}{'; '.join(bad)}")
-    if not name:
-        return motion
-    v = voices[name]
-    return PLACEHOLDER.sub(lambda m: v[m.group(1) or "voice"].strip().replace(SPEAKER, f"({m.group(2) or 'S1'})"), motion)
+    cast = _cast(cast)
+    return PLACEHOLDER.sub(lambda m: voices[_pick(cast, m.group(2))][m.group(1) or "voice"].strip().replace(SPEAKER, f"({m.group(2) or 'S1'})"),
+                           motion)
 
 
 def usage() -> dict:
@@ -121,6 +157,6 @@ def usage() -> dict:
         except (OSError, ValueError):
             continue
         for pos, s in enumerate(cfg.get("stages", []), 1):
-            if name := voice_of(s, cfg):
+            for name in dict.fromkeys(cast_of(s, cfg).values()):
                 out.setdefault(name, []).append({"project": pj.parent.name, "stage": s.get("id", pos)})
     return out

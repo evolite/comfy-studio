@@ -61,7 +61,8 @@ are merged per top-level key instead (`config.library_merged`). Web UI edits (Lo
 `pipeline/graph_settings.py`, unknown keys error); a stage can override any of them; a key absent everywhere takes the
 template's value. Each stage: stable `id` (names its `stage_N` files; gaps fine, order = array order), `krea_scene`,
 `il_scene`, `loras`, `motion`, `duration`, `video_loras`, optional `seed`/`video_seed`/`video_engine`/`voice`. LoRA
-triggers are appended automatically; a `voice` (stage, else project) fills the motion's `{voice}` slots. A stage is
+triggers are appended automatically; a `voice` (stage, else project) fills the motion's `{voice}` slots; `voices` (`{"S2": name}`) gives another
+speaker its own for its `:S2` slots. A stage is
 self-contained: describe the character in every `krea_scene`. Past runs' `_debug/*/graph.json` hold the exact prompts,
 seeds and settings used.
 

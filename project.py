@@ -7,7 +7,8 @@ each stage = id (stable unique int; stage_N.png/mp4), krea_scene, il_scene, `lor
 default: 2.0, 2.9 for the last; aim for 2-4 s), `video_loras` (extra i2v LoRAs chained after the turbo one, as
 {"name": strength}, decimals ok, e.g. {"motion_lora": 1.0, "other_lora": 0.6}; names in the LoRA library) and
 optional `audio` (true = the i2v clip gets a generated soundtrack), optional `voice` (a voice-library name filling the motion's
-{voice} / {voice.delivery} / {voice.moans} / {voice.sound}; a top-level `voice` is the project default; pipeline/voice_registry.py), optional `video_seed` (pin the i2v noise seed; default is random per render, logged in _debug/i2v_stage_N/).
+{voice} / {voice.delivery} / {voice.moans} / {voice.sound}; a top-level `voice` is the project default; optional `voices`
+({"S2": name}, stage or project level) gives another speaker its own voice for its :S2 slots; pipeline/voice_registry.py), optional `video_seed` (pin the i2v noise seed; default is random per render, logged in _debug/i2v_stage_N/).
 Top-level `video_megapixels` (i2v clip size; template default 0.4 = 512x768 at 2:3, 1.04 = 832x1248) and `video_engine`
 (the i2v model, animate_pipeline.VIDEO_ENGINES: minimax (default) | ltx = LTX 2.3 / Sulphur 2; a stage's own `video_engine` wins).
 
@@ -265,7 +266,7 @@ def estimate(name, numbers):
     numbers = [n for n in numbers if n in ctx.stages]
     def clip(s, rife=False):
         engine = video_engine(ctx.cfg, s)
-        motion = voice_registry.expand(s.get("motion", ""), voice_registry.voice_of(s, ctx.cfg), f"stage {s['id']}")
+        motion = voice_registry.expand(s.get("motion", ""), voice_registry.cast_of(s, ctx.cfg), f"stage {s['id']}")
         return animate_pipeline.build_graph(animate_pipeline.template_for(engine, s.get("audio")), "x", motion,
                                             stage_duration(all_stages, s["id"], engine)["duration_value"], s.get("video_loras", {}), None,
                                             ctx.cfg.get("video_megapixels"), rife, engine, bool(s.get("audio")))
@@ -429,7 +430,7 @@ def animate_cmd(a, src, only):
     (d / "_debug").mkdir(exist_ok=True)
     motion_p, dur_p, lora_p, seed_p, audio_p, engine_p = (d / "_debug" / f for f in ("motion_prompts.json", "durations.json", "loras.json", "seeds.json", "audio.json", "engines.json"))
     voices = voice_registry.load()["voices"]  # {voice...} slots filled here, so the pipeline (and _debug graphs) see the final text
-    motions = {n: voice_registry.expand(ids[n]["motion"], voice_registry.voice_of(ids[n], cfg), f"stage {n}", voices) for n in todo}
+    motions = {n: voice_registry.expand(ids[n]["motion"], voice_registry.cast_of(ids[n], cfg), f"stage {n}", voices) for n in todo}
     save(motion_p, {str(n): lora_registry.with_video_triggers(motions[n], ids[n].get("video_loras", {})) for n in todo})
     save(dur_p, {str(n): stage_duration(stages, n, video_engine(cfg, ids[n])) for n in todo})
     save(engine_p, {str(n): video_engine(cfg, ids[n]) for n in todo})
@@ -570,11 +571,13 @@ def cmd_show(a):
                 outputs[rel(f) if f != d else "root"] = got
         own = re.compile(rf"(?:^|_)stage_{n}(?:_|$)")
         eng = video_engine(cfg, s)
-        vname = voice_registry.voice_of(s, cfg)
-        voice = {"name": vname, "from": "stage" if s.get("voice") else "project"} if vname else None
+        vname, cast = voice_registry.voice_of(s, cfg), voice_registry.cast_of(s, cfg)
+        voice = {"name": vname, "from": "stage" if s.get("voice") else "project"} if cast else None
+        if voice and set(cast) - {"S1"}:
+            voice["speakers"] = cast
         if voice and voice_registry.PLACEHOLDER.search(s.get("motion", "")):
-            bad = voice_registry.problems(s["motion"], vname)
-            voice["expanded_motion"] = "; ".join(bad) if bad else voice_registry.expand(s["motion"], vname)
+            bad = voice_registry.problems(s["motion"], cast)
+            voice["expanded_motion"] = "; ".join(bad) if bad else voice_registry.expand(s["motion"], cast)
         off = lora_registry.disabled_in(s.get("loras"), "image") + lora_registry.disabled_in(s.get("video_loras"), "video")
         return {"stage": s, "video_engine": eng, "voice": voice,
                 **({"switched_off_loras": off} if off else {}),  # retired on the LoRAs page: swap them (pipeline/lora_registry.py)

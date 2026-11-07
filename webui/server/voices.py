@@ -89,7 +89,7 @@ def make_sample(name: str) -> dict:
         stage = {"id": max(s["id"] for s in cfg["stages"]) + 1}
         cfg["stages"].append(stage)
     if stage["id"] != base["id"]:
-        stage.update({k: v for k, v in base.items() if k not in ("id", "voice", "done")})
+        stage.update({k: v for k, v in base.items() if k not in ("id", "voice", "voices", "done")})
         shutil.copyfile(still, d / "preview" / f"stage_{stage['id']}.png")
     stage["voice"] = name
     stage["done"] = ["preview"]

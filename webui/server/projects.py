@@ -28,7 +28,7 @@ import voice_registry  # noqa: E402
 
 TIERS = [1.0, 2.0, 2.9, 5.0]
 STAGE_FIELDS = {"krea_scene", "il_scene", "il_background", "motion", "duration", "loras", "video_loras", "video_engine", "audio", "seed", "video_seed",
-                "il_denoise", "face_detailer_enabled", "face_wildcard", "done", "voice"}
+                "il_denoise", "face_detailer_enabled", "face_wildcard", "done", "voice", "voices"}
 PREVIEW_GATED = {action for (step, _), (action, _) in steps.ACTION_IDS.items() if steps.STEPS[step].needs}  # steps that build on an approved preview (animate only needs its own source still)
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 PROJECT_JSON = "project.json"  # a project's config file, in the project dir
@@ -258,6 +258,10 @@ def validate_stage(patch, label):
         raise ApiError(f"{label}: duration must be between 1.0 and 10.0 seconds")
     if patch.get("voice") and patch["voice"] not in voice_registry.load()["voices"]:
         raise ApiError(f"{label}: no voice {patch['voice']!r} in the voice library")
+    try:
+        voice_registry.check_cast(patch.get("voices"), label)
+    except ValueError as e:
+        raise ApiError(str(e)) from e
     if patch.get("video_engine") and patch["video_engine"] not in animate_pipeline.VIDEO_ENGINES:
         raise ApiError(f"{label}: video_engine must be one of {', '.join(animate_pipeline.VIDEO_ENGINES)}")
     try:

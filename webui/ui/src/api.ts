@@ -5,13 +5,14 @@ export type Stage = {
   done?: boolean | string[];  // folders this stage is completed in (legacy `true` = every folder)
   loras?: Record<string, number>; video_loras?: Record<string, number>; video_engine?: string; seed?: number; video_seed?: number; audio?: boolean;
   voice?: string;  // a voice-library name filling the motion's {voice...} slots (else the project's `voice`)
+  voices?: Record<string, string>;  // other speakers' voices, {"S2": name}: fill their {voice...:S2} slots (else the project's `voices`, else `voice`)
   [k: string]: unknown;
 };
 /** One preview render of a stage (pipeline/takes.py); `delta` = what differs from the current take ("seed", "prompt · cfg"). */
 export type Take = { id: string; mtime: number; current: boolean; source: "run" | "external" | "legacy"; delta: string };
 export type FolderState = { stills: Record<string, number>; clips: Record<string, number>; takes?: Record<string, Take[]>; stale?: number[]; stale_clips?: number[] };
 export type Project = {
-  name: string; config: { engine: string; oneoff?: boolean; seed?: number; video_megapixels?: number; video_engine?: string; voice?: string; music?: { beat_times_file?: string; audio?: string }; settings: Record<string, unknown>; stages: Stage[] };
+  name: string; config: { engine: string; oneoff?: boolean; seed?: number; video_megapixels?: number; video_engine?: string; voice?: string; voices?: Record<string, string>; music?: { beat_times_file?: string; audio?: string }; settings: Record<string, unknown>; stages: Stage[] };
   folders: Record<string, FolderState>; edits: { name: string; mtime: number; size: number; folder: string | null }[];
 };
 export type ProjectRow = { name: string; engine: string; oneoff?: boolean; finished?: boolean; thumb?: number | null; stages: number; stills: number; clips: number; edits: number; mtime: number };
@@ -108,13 +109,17 @@ export type VoiceEntry = { label?: string; tags?: string[]; disabled?: boolean; 
 export type VoiceLibrary = { voices: Record<string, VoiceEntry>; slots: VoiceSlot[] };
 
 const VOICE_RE = /\{voice(?:\.(delivery|moans|sound))?(?::(S\d+))?\}/g;
+/** Who speaks with which voice entry: {S1: entry, S2: entry}; a speaker without one uses S1's. */
+export type VoiceCast = Record<string, VoiceEntry | undefined>;
 /** The motion with its {voice...} slots filled (what animate sends); unfillable slots stay as they are. Same rules as voice_registry.expand. */
-export function expandVoice(motion: string, v?: VoiceEntry): string {
-  if (!v) return motion;
+export function expandVoice(motion: string, cast: VoiceCast): string {
   return motion.replace(VOICE_RE, (m, slot: VoiceSlot | undefined, sp: string | undefined) => {
-    const t = (v[slot ?? "voice"] ?? "").trim();
+    const t = ((cast[sp ?? "S1"] ?? cast.S1)?.[slot ?? "voice"] ?? "").trim();
     return t ? t.replaceAll("(S)", `(${sp ?? "S1"})`) : m;
   });
 }
+/** The slots a motion uses, with their speaker ("S1" when the slot names none). */
+export const voiceUsesIn = (motion: string): { slot: VoiceSlot; speaker: string }[] =>
+  [...motion.matchAll(VOICE_RE)].map((m) => ({ slot: (m[1] ?? "voice") as VoiceSlot, speaker: m[2] ?? "S1" }));
 /** The slots a motion uses. */
 export const voiceSlotsIn = (motion: string): VoiceSlot[] => [...new Set([...motion.matchAll(VOICE_RE)].map((m) => (m[1] ?? "voice") as VoiceSlot))];
