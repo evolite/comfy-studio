@@ -5,14 +5,14 @@ A local studio for multi-stage AI image sets and short clips, built on [ComfyUI]
 pipeline, and a web UI shows the board:
 
 I built this primarily to get an AI first experience, where basically the AI makes the prompts, the workflows, manages the models, the loras etc
-But it has other side effects
+But it has other side effects.
 
 Some warnings:
 
 
-**THIS IS VIBE CODED** (but guided in a slightly sensible way, and i use sonarqube to fix outrageous issues.)
-**I literally can't tell you how to run this shit or how it works, use an AI CLI agent to set it up.**
-**I run Arch Linux, some things might not be compatible on your system, again, make claude or somethign fix it**
+1. **THIS IS VIBE CODED** (but guided in a slightly sensible way, and i use sonarqube to fix outrageous issues.)
+2. **I literally can't tell you how to run this shit or how it works, use an AI CLI agent to set it up.**
+3. **I run Arch Linux, some things might not be compatible on your system, again, make claude or something fix it**
 
 It's built around some steps
 
