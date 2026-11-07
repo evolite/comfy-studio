@@ -4,6 +4,13 @@ A local studio for multi-stage AI image sets and short clips, built on [ComfyUI]
 [Comfy Cloud](https://cloud.comfy.org). A project is a list of stages (one shot each); every stage goes through the same
 pipeline, and a web UI shows the board:
 
+I built this primarily to get an AI first experience, where basically the AI makes the prompts, the workflows, manages the models, the loras etc
+But it has other side effects
+
+** I literally can't tell you how to run this shit or how it works, use an AI CLI agent to set it up. **
+
+It's built around some steps
+
 1. **Preview** — Krea2 (or MOSS-Image) base render, several takes per stage
 2. **Upscale** — Illustrious refine with ControlNets, or a latent hires pass; optional face detailer
 3. **Finish** — SeedVR2 (optional)
@@ -20,7 +27,7 @@ in the web UI.
 
 ## Requirements
 - Python 3.14, Node 20+ (for building the web UI), ffmpeg
-- A local ComfyUI and/or a Comfy Cloud API key. The local target checks the server's `/object_info` before running and
+- A local ComfyUI and/or a Comfy Cloud API key (or a runpod api key). The local target checks the server's `/object_info` before running and
   names any missing node or model.
 - Optional: a RunPod account and network volume for the RunPod animate target (`runpod/`)
 
