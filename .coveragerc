@@ -1,0 +1,7 @@
+[run]
+# relative paths: the Sonar scanner runs in another directory than pytest on CI
+relative_files = True
+source = .
+omit =
+    tests/*
+    webui/.venv/*

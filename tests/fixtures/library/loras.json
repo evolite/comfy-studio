@@ -1,0 +1,66 @@
+{
+  "image": {
+    "detail": {
+      "category": "concept",
+      "krea": "detail_k.safetensors",
+      "il": "detail_il.safetensors",
+      "krea_trigger": "fine detail",
+      "il_trigger": "highly detailed",
+      "suggested": 1.0,
+      "cloud": true,
+      "note": "Test entry with both passes."
+    },
+    "realistic_snapshot": {
+      "category": "style",
+      "krea": "RealisticSnapshotKrea2V2.safetensors",
+      "suggested": 1.5,
+      "cloud": false,
+      "note": "Realistic Snapshot v2 (MOSS-IMAGE + KREA2 + ZIT): casual smartphone-photo realism, boosts detail and skin texture. No trigger word. Local only.",
+      "tips": "The author recommends pushing it high: 1.5, sometimes up to 2.0 depending on the image. Style LoRA: it fights other grading LoRAs, so lower one of them when stacking. Also a candidate for the latent-upscale pass (hires_lora_scale scales it with the rest).",
+      "url": "https://civitai.com/models/2268008?modelVersionId=3371723",
+      "moss": "moss/MOSSRealisticSnapshotV1.safetensors"
+    },
+    "background_detail": {
+      "category": "style",
+      "krea": "zy_BackgroundDetail_K2.safetensors",
+      "suggested": 0.6,
+      "cloud": false,
+      "note": "Background Detail Enhancer (Krea2): more detail and clutter in the background. No trigger. Local only.",
+      "tips": "Author: 0.1-0.75. Prompt words that help: cluttered, detailed background, elaborate, intricate. Untuned on Krea2: start at 0.6.",
+      "url": "https://civitai.com/models/633524?modelVersionId=3211112"
+    }
+  },
+  "video": {
+    "unlock": {
+      "category": "concept",
+      "file": "unlock_h3.safetensors",
+      "suggested": 1.0,
+      "cloud": true,
+      "note": "Test i2v LoRA."
+    },
+    "burst": {
+      "category": "concept",
+      "file": "burst_h3.safetensors",
+      "suggested": 0.7,
+      "cloud": true
+    },
+    "motion_plus": {
+      "category": "concept",
+      "file": "motion_plus_h3.safetensors",
+      "suggested": 0.7,
+      "cloud": true
+    }
+  },
+  "combos": {
+    "finish": {
+      "kind": "video",
+      "loras": {
+        "unlock": 1.0,
+        "burst": 0.7,
+        "motion_plus": 0.7
+      },
+      "note": "Test combo."
+    }
+  },
+  "ignore": []
+}

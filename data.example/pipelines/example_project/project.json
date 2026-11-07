@@ -1,0 +1,30 @@
+{
+  "engine": "krea2",
+  "settings": {
+    "krea_unet": "krea2_turbo_fp8_scaled.safetensors"
+  },
+  "stages": [
+    {
+      "id": 1,
+      "krea_scene": "A woman in her early thirties with wavy auburn hair to her shoulders, light freckles and hazel eyes, wearing a long olive raincoat over a cream knit sweater, stands under a dark green awning on a rainy city street at night. Neon shop signs reflect in the wet pavement behind her, raindrops fall through the light. She holds a closed black umbrella and looks out at the rain with a calm half smile. Medium shot from the front, eye level, soft neon light from the side, shallow depth of field. Photo.",
+      "il_scene": "",
+      "motion": "She opens the black umbrella with one smooth push and lifts it over her head, then steps out from under the awning into the rain. Raindrops bounce off the umbrella. The camera holds at eye level and slowly pulls back as she walks toward it.\n\nSound: steady rain on the awning and the umbrella, distant traffic.",
+      "video_loras": {},
+      "loras": {},
+      "face_detailer_enabled": true,
+      "audio": true,
+      "duration": 2.9
+    },
+    {
+      "id": 2,
+      "krea_scene": "A woman in her early thirties with wavy auburn hair to her shoulders, light freckles and hazel eyes, wearing a long olive raincoat over a cream knit sweater, sits at a small wooden table by a rain-streaked caf\u00e9 window at night, her folded umbrella leaning against the wall beside her. She holds a white mug of coffee in both hands and smiles toward the camera. Warm lamp light inside, blurred neon colors on the wet glass behind her. Close-up from the front, slightly above eye level, shallow depth of field. Photo.",
+      "il_scene": "",
+      "motion": "She lifts the mug, blows gently across the coffee and takes a slow sip, then lowers it and smiles at the camera. Rain runs down the window behind her. The camera pushes in slowly toward her face.\n\nSound: soft caf\u00e9 chatter, rain against the glass, a cup set down on a saucer.",
+      "video_loras": {},
+      "loras": {},
+      "face_detailer_enabled": true,
+      "audio": true,
+      "duration": 2.9
+    }
+  ]
+}

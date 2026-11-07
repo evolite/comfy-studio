@@ -1,0 +1,13 @@
+{
+  "_comment": "Your local ComfyUI's file names. Copy to data/library/local_models.json and edit; keys there replace these one by one. model_names maps a cloud file name to your local path; *_folder are prefixes inside ComfyUI's models/ folders; local_only_* are files that exist only on your machine (cloud runs refuse them).",
+  "model_names": {},
+  "il_checkpoint_folder": "",
+  "krea_checkpoint": "krea2TurboOfficialComfy_krea2TurboFp8.safetensors",
+  "krea_vae": "qwen_image_vae.safetensors",
+  "krea_lora_folder": "",
+  "il_lora_folder": "",
+  "local_only_vaes": [],
+  "local_only_unets": [],
+  "seedvr_model": "seedvr2_ema_3b_fp8_e4m3fn.safetensors",
+  "seedvr_color": "wavelet"
+}

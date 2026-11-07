@@ -1,0 +1,18 @@
+{
+    "KPlugin": {
+        "Id": "org.comfycloud.status.cloud",
+        "Name": "Comfy Cloud Status",
+        "Description": "Running job and step progress for Comfy Cloud, from dashboard.py",
+        "Icon": "weather-clouds",
+        "Category": "System Information",
+        "License": "MIT",
+        "Version": "1.0",
+        "Authors": [
+            {
+                "Name": "ComfyCloud"
+            }
+        ]
+    },
+    "X-Plasma-API-Minimum-Version": "6.0",
+    "KPackageStructure": "Plasma/Applet"
+}

@@ -1,0 +1,12 @@
+# Python 3.14. webui/.venv is built from this: python -m venv webui/.venv && webui/.venv/bin/pip install -r requirements.txt
+fastapi==0.142.2
+uvicorn[standard]==0.54.0
+python-multipart==0.0.32
+python-dotenv==1.2.4
+numpy==2.5.4
+pillow==13.0.0
+requests==2.34.2
+# tests
+pytest==9.1.1
+pytest-cov==7.1.0
+httpx==0.28.1

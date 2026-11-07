@@ -1,0 +1,684 @@
+{
+  "29": {
+    "inputs": {
+      "filename_prefix": "Krea2_turbo",
+      "images": [
+        "30:8",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "49": {
+    "inputs": {
+      "aspect_ratio": "2:3 (Portrait Photo)",
+      "megapixels": 1,
+      "multiple": 8
+    },
+    "class_type": "ResolutionSelector",
+    "_meta": {
+      "title": "Resolution Selector"
+    }
+  },
+  "435": {
+    "inputs": {
+      "compare_view": {
+        "beforeImages": [
+          "/api/view?filename=119c9adc497668884e469d5a34abf6a398311d48208216678fb13ccfc80b4cf1.png&id=f07eded8-beb1-44dc-8e4d-16a81402dc8d&subfolder=&type=temp"
+        ],
+        "afterImages": [
+          "/api/view?filename=c0f77f402bf1c287924efe67e03458dba545adeee2e143c9d9da8a9abe3a78e9.png&id=b9e60496-aecd-45c1-a665-1c784d18eb18&subfolder=&type=temp"
+        ]
+      },
+      "image_a": [
+        "29",
+        0
+      ],
+      "image_b": [
+        "434:406",
+        0
+      ]
+    },
+    "class_type": "ImageCompare",
+    "_meta": {
+      "title": "Compare Images"
+    }
+  },
+  "436": {
+    "inputs": {
+      "filename_prefix": "Upscaled/",
+      "format": "png",
+      "format.bit_depth": "8-bit",
+      "format.input_color_space": "sRGB",
+      "images": [
+        "434:406",
+        0
+      ]
+    },
+    "class_type": "SaveImageAdvanced",
+    "_meta": {
+      "title": "Save Image (Advanced)"
+    }
+  },
+  "30:6": {
+    "inputs": {
+      "text": "A woman in her late twenties with shoulder-length dark brown hair, light freckles and green eyes sits in a black gaming chair in a dark room, wearing an oversized black knit sweater and a plain black headset. A glowing monitor behind her casts a cool blue-white rim light along her hair and shoulder, with a faint red LED glow out of focus in the background. She looks toward the camera with a faint smirk. Close upper-body portrait, shallow depth of field, a moody late-night mood. Photo.",
+      "clip": [
+        "30:11",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Prompt)"
+    }
+  },
+  "30:5": {
+    "inputs": {
+      "width": [
+        "49",
+        0
+      ],
+      "height": [
+        "49",
+        1
+      ],
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "Empty Latent Image"
+    }
+  },
+  "30:3": {
+    "inputs": {
+      "seed": 278918612708164,
+      "steps": 8,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1,
+      "model": [
+        "30:10",
+        0
+      ],
+      "positive": [
+        "30:6",
+        0
+      ],
+      "negative": [
+        "30:13",
+        0
+      ],
+      "latent_image": [
+        "30:5",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "30:8": {
+    "inputs": {
+      "samples": [
+        "30:3",
+        0
+      ],
+      "vae": [
+        "30:12",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "30:10": {
+    "inputs": {
+      "unet_name": "krea2_turbo_fp8_scaled.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "30:11": {
+    "inputs": {
+      "clip_name": "qwen3vl_4b_fp8_scaled.safetensors",
+      "type": "krea2",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "30:12": {
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "30:13": {
+    "inputs": {
+      "conditioning": [
+        "30:6",
+        0
+      ]
+    },
+    "class_type": "ConditioningZeroOut",
+    "_meta": {
+      "title": "Conditioning Zero Out"
+    }
+  },
+  "433:368": {
+    "inputs": {
+      "ckpt_name": "wai-illustrious-sdxl.safetensors"
+    },
+    "class_type": "CheckpointLoaderSimple",
+    "_meta": {
+      "title": "Load Checkpoint"
+    }
+  },
+  "433:369:353": {
+    "inputs": {
+      "type": "hed/pidi/scribble/ted",
+      "control_net": [
+        "433:369:371",
+        0
+      ]
+    },
+    "class_type": "SetUnionControlNetType",
+    "_meta": {
+      "title": "Set Union ControlNet Type"
+    }
+  },
+  "433:369:354": {
+    "inputs": {
+      "type": "normal",
+      "control_net": [
+        "433:369:371",
+        0
+      ]
+    },
+    "class_type": "SetUnionControlNetType",
+    "_meta": {
+      "title": "Set Union ControlNet Type"
+    }
+  },
+  "433:369:355": {
+    "inputs": {
+      "type": "canny/lineart/anime_lineart/mlsd",
+      "control_net": [
+        "433:369:371",
+        0
+      ]
+    },
+    "class_type": "SetUnionControlNetType",
+    "_meta": {
+      "title": "Set Union ControlNet Type"
+    }
+  },
+  "433:369:356": {
+    "inputs": {
+      "strength": 0.29000000000000004,
+      "start_percent": 0,
+      "end_percent": 0.7000000000000002,
+      "positive": [
+        "433:369:357",
+        0
+      ],
+      "negative": [
+        "433:369:357",
+        1
+      ],
+      "control_net": [
+        "433:369:355",
+        0
+      ],
+      "image": [
+        "29",
+        0
+      ],
+      "vae": [
+        "433:368",
+        2
+      ]
+    },
+    "class_type": "ControlNetApplyAdvanced",
+    "_meta": {
+      "title": "Apply ControlNet"
+    }
+  },
+  "433:369:357": {
+    "inputs": {
+      "strength": 0.4100000000000001,
+      "start_percent": 0,
+      "end_percent": 0.7000000000000002,
+      "positive": [
+        "433:369:358",
+        0
+      ],
+      "negative": [
+        "433:369:358",
+        1
+      ],
+      "control_net": [
+        "433:369:354",
+        0
+      ],
+      "image": [
+        "433:369:361",
+        0
+      ],
+      "vae": [
+        "433:368",
+        2
+      ]
+    },
+    "class_type": "ControlNetApplyAdvanced",
+    "_meta": {
+      "title": "Apply ControlNet"
+    }
+  },
+  "433:369:358": {
+    "inputs": {
+      "strength": 0.4,
+      "start_percent": 0,
+      "end_percent": 0.84,
+      "positive": [
+        "433:372",
+        0
+      ],
+      "negative": [
+        "433:403",
+        0
+      ],
+      "control_net": [
+        "433:369:353",
+        0
+      ],
+      "image": [
+        "433:369:359",
+        0
+      ],
+      "vae": [
+        "433:368",
+        2
+      ]
+    },
+    "class_type": "ControlNetApplyAdvanced",
+    "_meta": {
+      "title": "Apply ControlNet"
+    }
+  },
+  "433:369:359": {
+    "inputs": {
+      "safe": "enable",
+      "resolution": 1280,
+      "image": [
+        "29",
+        0
+      ]
+    },
+    "class_type": "HEDPreprocessor",
+    "_meta": {
+      "title": "HED Soft-Edge Lines"
+    }
+  },
+  "433:369:361": {
+    "inputs": {
+      "fov": 60,
+      "iterations": 5,
+      "resolution": 1280,
+      "image": [
+        "29",
+        0
+      ]
+    },
+    "class_type": "DSINE-NormalMapPreprocessor",
+    "_meta": {
+      "title": "DSINE Normal Map"
+    }
+  },
+  "433:369:371": {
+    "inputs": {
+      "control_net_name": "xinsir__controlnet-union-sdxl-10__diffusion_pytorch_model.safetensors"
+    },
+    "class_type": "ControlNetLoader",
+    "_meta": {
+      "title": "Load ControlNet Model"
+    }
+  },
+  "433:372": {
+    "inputs": {
+      "text": "mature female, 1girl, brown hair, green eyes, freckles, masterpiece, best quality, amazing quality, absurdres, highres, extremely detailed, solo, oversized sweater, sitting, gaming chair, headset, screen light, backlighting, monitor, dark room, indoors, looking at viewer, smirk, upper body",
+      "clip": [
+        "433:368",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Prompt)"
+    }
+  },
+  "433:366": {
+    "inputs": {
+      "seed": 132945377349964,
+      "steps": 32,
+      "cfg": 3.4999999999999996,
+      "sampler_name": "dpmpp_2m_sde",
+      "scheduler": "karras",
+      "denoise": 1.0,
+      "model": [
+        "433:368",
+        0
+      ],
+      "positive": [
+        "433:369:356",
+        0
+      ],
+      "negative": [
+        "433:369:356",
+        1
+      ],
+      "latent_image": [
+        "433:440",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "433:367": {
+    "inputs": {
+      "samples": [
+        "433:366",
+        0
+      ],
+      "vae": [
+        "433:368",
+        2
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "433:403": {
+    "inputs": {
+      "text": "lowres, worst quality, bad anatomy, bad hands, extra fingers, extra limbs, blurry, jpeg artifacts, signature, watermark, text, censored, mosaic censoring, bar censor, harsh lighting, 2girls, realistic, photorealistic, 3d",
+      "clip": [
+        "433:368",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Prompt)"
+    }
+  },
+  "433:440": {
+    "inputs": {
+      "pixels": [
+        "29",
+        0
+      ],
+      "vae": [
+        "433:368",
+        2
+      ]
+    },
+    "class_type": "VAEEncode",
+    "_meta": {
+      "title": "VAE Encode"
+    }
+  },
+  "434:392": {
+    "inputs": {
+      "scale_method": "lanczos",
+      "seed": 179936178258594,
+      "steps": 36,
+      "cfg": 3.5,
+      "sampler_name": "dpmpp_2m_sde",
+      "scheduler": "karras",
+      "denoise": 0.10000000000000002,
+      "use_tiled_vae": true,
+      "tile_size": 512,
+      "model": [
+        "433:368",
+        0
+      ],
+      "vae": [
+        "433:368",
+        2
+      ],
+      "positive": [
+        "433:369:356",
+        0
+      ],
+      "negative": [
+        "433:369:356",
+        1
+      ],
+      "upscale_model_opt": [
+        "434:397",
+        0
+      ]
+    },
+    "class_type": "PixelKSampleUpscalerProvider",
+    "_meta": {
+      "title": "PixelKSampleUpscalerProvider"
+    }
+  },
+  "434:393": {
+    "inputs": {
+      "upscale_factor": 1.4999999999999996,
+      "steps": 2,
+      "temp_prefix": "",
+      "step_mode": "simple",
+      "vae_compression": 8,
+      "samples": [
+        "433:366",
+        0
+      ],
+      "upscaler": [
+        "434:392",
+        0
+      ]
+    },
+    "class_type": "IterativeLatentUpscale",
+    "_meta": {
+      "title": "Iterative Upscale (Latent/on Pixel Space)"
+    }
+  },
+  "434:394": {
+    "inputs": {
+      "samples": [
+        "434:393",
+        0
+      ],
+      "vae": [
+        "434:393",
+        1
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "434:397": {
+    "inputs": {
+      "model_name": "4x_NMKD-Siax_2d00k.pth"
+    },
+    "class_type": "UpscaleModelLoader",
+    "_meta": {
+      "title": "Load Upscale Model"
+    }
+  },
+  "434:405": {
+    "inputs": {
+      "amount": 0.8,
+      "image": [
+        "434:418",
+        0
+      ]
+    },
+    "class_type": "ImageCASharpening+",
+    "_meta": {
+      "title": "\ud83d\udd27 Image Contrast Adaptive Sharpening"
+    }
+  },
+  "434:406": {
+    "inputs": {
+      "density": 0.25,
+      "intensity": 0.11,
+      "highlights": 1,
+      "supersample_factor": 4,
+      "repeats": 1,
+      "image": [
+        "434:405",
+        0
+      ]
+    },
+    "class_type": "Film Grain",
+    "_meta": {
+      "title": "Film Grain"
+    }
+  },
+  "434:419": {
+    "inputs": {
+      "model_name": "bbox/face_yolov8m.pt"
+    },
+    "class_type": "UltralyticsDetectorProvider",
+    "_meta": {
+      "title": "UltralyticsDetectorProvider"
+    }
+  },
+  "434:420": {
+    "inputs": {
+      "model_name": "sam_vit_b_01ec64.pth",
+      "device_mode": "AUTO"
+    },
+    "class_type": "SAMLoader",
+    "_meta": {
+      "title": "SAMLoader (Impact)"
+    }
+  },
+  "434:421": {
+    "inputs": {
+      "guide_size": 768,
+      "guide_size_for": true,
+      "max_size": 1024,
+      "seed": 856273094612313,
+      "steps": 30,
+      "cfg": 4.5,
+      "sampler_name": "dpmpp_2m_sde",
+      "scheduler": "karras",
+      "denoise": 0.35,
+      "feather": 12,
+      "noise_mask": true,
+      "force_inpaint": true,
+      "bbox_threshold": 0.45,
+      "bbox_dilation": 15,
+      "bbox_crop_factor": 3,
+      "sam_detection_hint": "center-1",
+      "sam_dilation": 8,
+      "sam_threshold": 0.93,
+      "sam_bbox_expansion": 0,
+      "sam_mask_hint_threshold": 0.7,
+      "sam_mask_hint_use_negative": "False",
+      "drop_size": 50,
+      "wildcard": "detailed face, natural skin texture, skin pores",
+      "cycle": 1,
+      "inpaint_model": false,
+      "noise_mask_feather": 20,
+      "tiled_encode": false,
+      "tiled_decode": false,
+      "image": [
+        "434:394",
+        0
+      ],
+      "model": [
+        "433:368",
+        0
+      ],
+      "clip": [
+        "433:368",
+        1
+      ],
+      "vae": [
+        "433:368",
+        2
+      ],
+      "positive": [
+        "433:369:356",
+        0
+      ],
+      "negative": [
+        "433:369:356",
+        1
+      ],
+      "bbox_detector": [
+        "434:419",
+        0
+      ],
+      "sam_model_opt": [
+        "434:420",
+        0
+      ]
+    },
+    "class_type": "FaceDetailer",
+    "_meta": {
+      "title": "FaceDetailer (Model2 realism)"
+    }
+  },
+  "434:422": {
+    "inputs": {
+      "image_a": [
+        "434:394",
+        0
+      ],
+      "image_b": [
+        "434:421",
+        0
+      ]
+    },
+    "class_type": "ImageCompare",
+    "_meta": {
+      "title": "Compare Images"
+    }
+  },
+  "434:418": {
+    "inputs": {
+      "switch": true,
+      "on_false": [
+        "434:394",
+        0
+      ],
+      "on_true": [
+        "434:421",
+        0
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "If/Else Switch"
+    }
+  }
+}

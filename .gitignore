@@ -1,0 +1,22 @@
+# data/ is yours: libraries, prompt guides, projects, audio, output (see data.example/ for its layout)
+/data/
+
+# local agent setup (personal rules and skills live in data/private/)
+/.claude/
+CLAUDE.local.md
+
+.env
+.pushover_token
+.comfyui_s3_token
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+*.bak
+webui/.venv/
+webui/ui/node_modules/
+webui/ui/dist/
+.scannerwork/
+.kimi-code/

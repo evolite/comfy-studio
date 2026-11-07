@@ -1,0 +1,48 @@
+# SonarQube Community scan of the default branch (no PR analysis on this edition).
+# Needs repo secrets SONAR_TOKEN and SONAR_URL; skipped until both exist.
+# Project key and sources come from sonar-project.properties.
+name: SonarQube analysis
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analysis:
+    runs-on: ubuntu-latest
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      SONAR_HOST_URL: ${{ secrets.SONAR_URL }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          pip install -r requirements.txt
+
+      - name: Run tests with coverage
+        run: python -m pytest -q --cov --cov-report=xml
+
+      # "New code" is measured against the previous version, so send one on every scan.
+      - name: Read version
+        id: ver
+        run: echo "version=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')" >> "$GITHUB_OUTPUT"
+
+      - name: Analyze with SonarQube
+        # scan even when a test failed; the failed test step still fails the run
+        if: ${{ !cancelled() && env.SONAR_TOKEN != '' && env.SONAR_HOST_URL != '' }}
+        uses: SonarSource/sonarqube-scan-action@v8.3.0
+        with:
+          args: -Dsonar.projectVersion=${{ steps.ver.outputs.version }}

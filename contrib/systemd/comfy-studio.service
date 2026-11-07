@@ -1,0 +1,13 @@
+[Unit]
+Description=Comfy Studio web UI + API (webui/server)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/comfy-studio
+ExecStart=%h/comfy-studio/webui/.venv/bin/uvicorn app:app --app-dir webui/server --host 127.0.0.1 --port 8191
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

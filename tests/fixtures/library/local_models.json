@@ -1,0 +1,18 @@
+{
+  "model_names": {
+    "wai-illustrious-sdxl.safetensors": "IL/waiIllustrious_v14.safetensors"
+  },
+  "il_checkpoint_folder": "IL/",
+  "krea_checkpoint": "krea/krea2TurboOfficialComfy_krea2TurboFp8.safetensors",
+  "krea_vae": "qwenImageVAE.safetensors",
+  "krea_lora_folder": "krea/",
+  "il_lora_folder": "",
+  "local_only_vaes": [
+    "local_only_vae.safetensors"
+  ],
+  "local_only_unets": [
+    "local_only_unet.safetensors"
+  ],
+  "seedvr_model": "seedvr2_ema_3b_fp8_e4m3fn.safetensors",
+  "seedvr_color": "wavelet"
+}

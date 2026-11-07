@@ -1,0 +1,14 @@
+{
+    "KPlugin": {
+        "Id": "org.comfycloud.status",
+        "Name": "ComfyUI Status",
+        "Description": "Running job and step progress from dashboard.py (local ComfyUI)",
+        "Icon": "applications-graphics",
+        "Category": "System Information",
+        "License": "MIT",
+        "Version": "1.0",
+        "Authors": [{"Name": "ComfyCloud"}]
+    },
+    "X-Plasma-API-Minimum-Version": "6.0",
+    "KPackageStructure": "Plasma/Applet"
+}

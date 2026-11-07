@@ -1,0 +1,46 @@
+{
+  "_comment": "Starter LoRA library. Your own goes in data/library/loras.json (the web UI's LoRAs page writes it there); see docs/loras.md.",
+  "image": {
+    "background_detail": {
+      "category": "style",
+      "krea": "zy_BackgroundDetail_K2.safetensors",
+      "suggested": 0.6,
+      "cloud": false,
+      "note": "Background Detail Enhancer (Krea2): more detail and clutter in the background. No trigger. Local only.",
+      "tips": "Author: 0.1-0.75. Prompt words that help: cluttered, detailed background, elaborate, intricate. Untuned on Krea2: start at 0.6.",
+      "url": "https://civitai.com/models/633524?modelVersionId=3211112"
+    },
+    "realistic_snapshot": {
+      "category": "style",
+      "krea": "RealisticSnapshotKrea2V2.safetensors",
+      "suggested": 1.5,
+      "cloud": false,
+      "note": "Realistic Snapshot v2 (MOSS-IMAGE + KREA2 + ZIT): casual smartphone-photo realism, boosts detail and skin texture. No trigger word. Local only.",
+      "tips": "The author recommends pushing it high: 1.5, sometimes up to 2.0 depending on the image. Style LoRA: it fights other grading LoRAs, so lower one of them when stacking. Also a candidate for the latent-upscale pass (hires_lora_scale scales it with the rest).",
+      "url": "https://civitai.com/models/2268008?modelVersionId=3371723",
+      "moss": "moss/MOSSRealisticSnapshotV1.safetensors"
+    },
+    "niji_sweet_spot": {
+      "category": "style",
+      "krea": "Niji_Sweet_Spot_Krea2_v2A.safetensors",
+      "krea_trigger": "@NJSW33T",
+      "suggested": 1,
+      "cloud": false,
+      "note": "Niji Sweet Spot Krea2 v2_A (MJ Niji v7 look): semi-realistic digital render, dramatic cinematic lighting, luminous eyes, shallow depth of field. Trigger @NJSW33T. Local only.",
+      "tips": "Author: 0.8-1.5, mostly 1.0 (v2 style is weaker than v1). Best for close-ups/portraits. Don't put a style in the prompt (realism, 3d, anime screenshot...) - it fights the LoRA. Pulls away from photoreal, so it clashes with realistic_snapshot. Euler + simple/beta.",
+      "url": "https://civitai.com/models/2554999?modelVersionId=3210573"
+    },
+    "mrpopo_anime": {
+      "category": "style",
+      "krea": "Mrpopo anime full potential.safetensors",
+      "suggested": 1.0,
+      "cloud": false,
+      "note": "Mrpopo's Krea2 Anime/Art enhanced v3.0 (Full Potential): vivid anime art style, richer color and detail. No trigger. Local only.",
+      "tips": "Author recommends 10 steps and the HDR VAE (Anima/Qwen) for more vibrance; works without. Untuned: start at 1.0. An anime style in the prompt agrees with it; don't pair with realistic_snapshot.",
+      "url": "https://civitai.com/models/2744585?modelVersionId=3168308"
+    }
+  },
+  "video": {},
+  "combos": {},
+  "ignore": []
+}

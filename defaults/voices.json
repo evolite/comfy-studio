@@ -1,0 +1,36 @@
+{
+  "_comment": "Starter voice library: a stage's motion fills its {voice...} slots from one of these (pipeline/voice_registry.py). Your own goes in data/library/voices.json.",
+  "voices": {
+    "soft": {
+      "label": "Soft",
+      "tags": [
+        "soft"
+      ],
+      "voice": "a soft, warm young adult woman's voice",
+      "delivery": "says (S) softly",
+      "moans": "sighs (S) softly",
+      "sound": "soft sighs and breaths"
+    },
+    "low": {
+      "label": "Low",
+      "tags": [
+        "low"
+      ],
+      "voice": "a low, calm adult man's voice",
+      "delivery": "says (S) in a low, calm tone",
+      "moans": "breathes (S) slowly and deeply",
+      "sound": "slow, deep breathing"
+    },
+    "whisper": {
+      "label": "Whisper",
+      "tags": [
+        "soft",
+        "whisper"
+      ],
+      "voice": "a young adult woman speaking only in a soft whisper",
+      "delivery": "whispers (S) softly",
+      "moans": "breathes (S) in quiet, shaky whispers",
+      "sound": "hushed whispering and soft breaths"
+    }
+  }
+}

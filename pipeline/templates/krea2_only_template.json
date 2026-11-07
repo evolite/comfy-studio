@@ -1,0 +1,270 @@
+{
+  "29": {
+    "inputs": {
+      "filename_prefix": "Krea2_turbo",
+      "images": [
+        "30:8",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "49": {
+    "inputs": {
+      "aspect_ratio": "2:3 (Portrait Photo)",
+      "megapixels": 1,
+      "multiple": 8
+    },
+    "class_type": "ResolutionSelector",
+    "_meta": {
+      "title": "Resolution Selector"
+    }
+  },
+  "30:6": {
+    "inputs": {
+      "text": "A woman in her late twenties with shoulder-length dark brown hair, light freckles and green eyes sits in a black gaming chair in a dark room, wearing an oversized black knit sweater and a plain black headset. A glowing monitor behind her casts a cool blue-white rim light along her hair and shoulder, with a faint red LED glow out of focus in the background. She looks toward the camera with a faint smirk. Close upper-body portrait, shallow depth of field, a moody late-night mood. Photo.",
+      "clip": [
+        "30:11",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Prompt)"
+    }
+  },
+  "30:5": {
+    "inputs": {
+      "width": [
+        "49",
+        0
+      ],
+      "height": [
+        "49",
+        1
+      ],
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "Empty Latent Image"
+    }
+  },
+  "30:3": {
+    "inputs": {
+      "seed": 278918612708164,
+      "steps": 8,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1,
+      "model": [
+        "30:10",
+        0
+      ],
+      "positive": [
+        "30:6",
+        0
+      ],
+      "negative": [
+        "30:13",
+        0
+      ],
+      "latent_image": [
+        "30:5",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "30:8": {
+    "inputs": {
+      "samples": [
+        "30:3",
+        0
+      ],
+      "vae": [
+        "30:12",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "30:10": {
+    "inputs": {
+      "unet_name": "krea2_turbo_fp8_scaled.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "30:11": {
+    "inputs": {
+      "clip_name": "qwen3vl_4b_fp8_scaled.safetensors",
+      "type": "krea2",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "30:12": {
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "30:13": {
+    "inputs": {
+      "conditioning": [
+        "30:6",
+        0
+      ]
+    },
+    "class_type": "ConditioningZeroOut",
+    "_meta": {
+      "title": "Conditioning Zero Out"
+    }
+  },
+  "30:963": {
+    "inputs": {
+      "amount": 0.8,
+      "image": [
+        "30:970",
+        0
+      ]
+    },
+    "class_type": "ImageCASharpening+",
+    "_meta": {
+      "title": "Sharpen"
+    }
+  },
+  "30:964": {
+    "inputs": {
+      "density": 0.25,
+      "intensity": 0.11,
+      "highlights": 1,
+      "supersample_factor": 4,
+      "repeats": 1,
+      "image": [
+        "30:963",
+        0
+      ]
+    },
+    "class_type": "Film Grain",
+    "_meta": {
+      "title": "Film Grain"
+    }
+  },
+  "436": {
+    "inputs": {
+      "filename_prefix": "Krea2_only_final/",
+      "images": [
+        "30:964",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image (Krea2-only final)"
+    }
+  },
+  "30:965": {
+    "inputs": {
+      "model_name": "4x_NMKD-Siax_2d00k.pth"
+    },
+    "class_type": "UpscaleModelLoader",
+    "_meta": {
+      "title": "Load Upscale Model"
+    }
+  },
+  "30:968": {
+    "inputs": {
+      "scale_method": "lanczos",
+      "seed": 0,
+      "steps": 8,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 0.25,
+      "use_tiled_vae": true,
+      "tile_size": 512,
+      "model": [
+        "30:10",
+        0
+      ],
+      "vae": [
+        "30:12",
+        0
+      ],
+      "positive": [
+        "30:6",
+        0
+      ],
+      "negative": [
+        "30:13",
+        0
+      ],
+      "upscale_model_opt": [
+        "30:965",
+        0
+      ]
+    },
+    "class_type": "PixelKSampleUpscalerProvider",
+    "_meta": {
+      "title": "PixelKSampleUpscalerProvider"
+    }
+  },
+  "30:969": {
+    "inputs": {
+      "upscale_factor": 1.5,
+      "steps": 1,
+      "temp_prefix": "",
+      "step_mode": "simple",
+      "vae_compression": 8,
+      "samples": [
+        "30:3",
+        0
+      ],
+      "upscaler": [
+        "30:968",
+        0
+      ]
+    },
+    "class_type": "IterativeLatentUpscale",
+    "_meta": {
+      "title": "Iterative Upscale (Latent/on Pixel Space)"
+    }
+  },
+  "30:970": {
+    "inputs": {
+      "samples": [
+        "30:969",
+        0
+      ],
+      "vae": [
+        "30:969",
+        1
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  }
+}

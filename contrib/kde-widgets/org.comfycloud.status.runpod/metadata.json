@@ -1,0 +1,18 @@
+{
+    "KPlugin": {
+        "Id": "org.comfycloud.status.runpod",
+        "Name": "RunPod Status",
+        "Description": "The RunPod animate pod (up/down, $/hr, balance) and its running job, from dashboard.py",
+        "Icon": "network-server",
+        "Category": "System Information",
+        "License": "MIT",
+        "Version": "1.0",
+        "Authors": [
+            {
+                "Name": "ComfyCloud"
+            }
+        ]
+    },
+    "X-Plasma-API-Minimum-Version": "6.0",
+    "KPackageStructure": "Plasma/Applet"
+}

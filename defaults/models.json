@@ -1,0 +1,34 @@
+{
+  "_comment": "Model file names. Copy any key to data/library/models.json to replace it. new_project: what `project.py <name> new` writes into settings. moss_unet: the MOSS-Image checkpoint (local only). choices: the web UI's model dropdowns (add your Comfy Cloud uploads or local files here).",
+  "new_project": {
+    "krea_unet": "krea2_turbo_fp8_scaled.safetensors",
+    "il_checkpoint": "wai-illustrious-sdxl.safetensors"
+  },
+  "moss_unet": "moss_image.safetensors",
+  "choices": {
+    "krea_unet": [
+      "krea2_turbo_fp8_scaled.safetensors",
+      "krea2_turbo_bf16.safetensors",
+      "krea2_turbo_int8_convrot.safetensors",
+      "krea2_turbo_nvfp4.safetensors"
+    ],
+    "krea_vae": [
+      "qwen_image_vae.safetensors"
+    ],
+    "hires_vae": [
+      "qwen_image_vae.safetensors"
+    ],
+    "il_checkpoint": [
+      "wai-illustrious-sdxl.safetensors",
+      "Illustrious-XL-sdxl.safetensors"
+    ],
+    "upscale_model": [
+      "4x_NMKD-Siax_2d00k.pth",
+      "4x-UltraSharp.pth",
+      "4x-ClearRealityV1.pth",
+      "4xNomosUniDAT_otf.pth",
+      "RealESRGAN_x4plus.pth",
+      "RealESRGAN_x4plus_anime_6B.pth"
+    ]
+  }
+}

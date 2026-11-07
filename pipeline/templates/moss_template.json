@@ -1,0 +1,130 @@
+{
+ "30:10": {
+  "class_type": "UNETLoader",
+  "inputs": {
+   "unet_name": "moss_image.safetensors",
+   "weight_dtype": "default"
+  },
+  "_meta": {
+   "title": "MOSS diffusion model"
+  }
+ },
+ "30:11": {
+  "class_type": "CLIPLoader",
+  "inputs": {
+   "clip_name": "qwen3.5_9b_w4a8_gptq.safetensors",
+   "type": "moss_image",
+   "device": "default"
+  },
+  "_meta": {
+   "title": "MOSS text encoder (Qwen3.5 9B)"
+  }
+ },
+ "30:12": {
+  "class_type": "VAELoader",
+  "inputs": {
+   "vae_name": "flux2-vae_small.safetensors"
+  },
+  "_meta": {
+   "title": "FLUX.2 VAE"
+  }
+ },
+ "49": {
+  "class_type": "ResolutionSelector",
+  "inputs": {
+   "aspect_ratio": "2:3 (Portrait Photo)",
+   "megapixels": 1,
+   "multiple": 16
+  }
+ },
+ "30:5": {
+  "class_type": "EmptyFlux2LatentImage",
+  "inputs": {
+   "width": [
+    "49",
+    0
+   ],
+   "height": [
+    "49",
+    1
+   ],
+   "batch_size": 1
+  }
+ },
+ "30:6": {
+  "class_type": "CLIPTextEncode",
+  "inputs": {
+   "text": "",
+   "clip": [
+    "30:11",
+    0
+   ]
+  },
+  "_meta": {
+   "title": "positive"
+  }
+ },
+ "30:13": {
+  "class_type": "CLIPTextEncode",
+  "inputs": {
+   "text": "worst quality, bad anatomy, watermark, jpeg artifacts",
+   "clip": [
+    "30:11",
+    0
+   ]
+  },
+  "_meta": {
+   "title": "negative"
+  }
+ },
+ "30:3": {
+  "class_type": "KSampler",
+  "inputs": {
+   "seed": 0,
+   "steps": 25,
+   "cfg": 2,
+   "sampler_name": "er_sde",
+   "scheduler": "simple",
+   "denoise": 1,
+   "model": [
+    "30:10",
+    0
+   ],
+   "positive": [
+    "30:6",
+    0
+   ],
+   "negative": [
+    "30:13",
+    0
+   ],
+   "latent_image": [
+    "30:5",
+    0
+   ]
+  }
+ },
+ "30:8": {
+  "class_type": "VAEDecode",
+  "inputs": {
+   "samples": [
+    "30:3",
+    0
+   ],
+   "vae": [
+    "30:12",
+    0
+   ]
+  }
+ },
+ "436": {
+  "class_type": "SaveImage",
+  "inputs": {
+   "filename_prefix": "MOSS/",
+   "images": [
+    "30:8",
+    0
+   ]
+  }
+ }
+}

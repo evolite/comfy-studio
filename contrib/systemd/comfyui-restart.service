@@ -1,0 +1,8 @@
+[Unit]
+Description=Restart the local ComfyUI when idle (restart_comfyui.py)
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/comfy-studio
+ExecStart=%h/comfy-studio/webui/.venv/bin/python restart_comfyui.py
+TimeoutStartSec=4h

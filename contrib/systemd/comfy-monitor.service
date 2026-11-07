@@ -1,0 +1,13 @@
+[Unit]
+Description=ComfyUI status dashboard (dashboard.py)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/comfy-studio
+ExecStart=/usr/bin/python3 %h/comfy-studio/dashboard.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
