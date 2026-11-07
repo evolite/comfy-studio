@@ -292,7 +292,7 @@ class Manager:
                            "paid step, so the run refuses to start with an empty motion)")
         voices = voice_registry.load()["voices"]
         unfilled = [f"stage {n}: {'; '.join(p)}" for n in stages if n in by_pos
-                    and (p := voice_registry.problems(by_pos[n].get("motion", ""), voice_registry.voice_of(by_pos[n], cfg), voices))]
+                    and (p := voice_registry.problems(by_pos[n].get("motion", ""), voice_registry.cast_of(by_pos[n], cfg), voices))]
         if unfilled:
             raise ApiError(" | ".join(unfilled))
 
