@@ -13,7 +13,7 @@ def test_build_graph_patches_the_hardcoded_node_ids():
         assert g["105:104"]["inputs"]["prompt"] == "PROMPT"
         assert g["105:111"]["inputs"]["value"] == 2.9
         assert g[ap.SEED_NODE]["inputs"]["noise_seed"] == 123
-        loras = [n for n in g.values() if n["class_type"] == "LoraLoaderModelOnly" and "M3_Unlocked" in str(n["inputs"].get("lora_name"))]
+        loras = [n for n in g.values() if n["class_type"] == "LoraLoaderModelOnly" and n["inputs"].get("lora_name") == "unlock_h3.safetensors"]
         assert len(loras) == 1
 
 

@@ -18,10 +18,12 @@ def lib(tmp_path, monkeypatch):
     return f
 
 
-def test_test_and_starter_libraries_are_valid(monkeypatch):
+def test_test_and_starter_libraries_are_valid(tmp_path, monkeypatch):
     lora_registry.validate(lora_registry.load())
-    monkeypatch.setattr(config, "LORAS_FILE", config.LIBRARY_DIR / "none.json")  # missing: the defaults/ starter is read
-    lora_registry.validate(lora_registry.load())
+    monkeypatch.setattr(config, "LORAS_FILE", tmp_path / "loras.json")  # not there yet: the defaults/ starter is read
+    starter = lora_registry.load()
+    lora_registry.validate(starter)
+    assert "background_detail" in starter["image"]
 
 
 def test_save_writes_the_library_copy_and_keeps_backups(tmp_path, monkeypatch):
