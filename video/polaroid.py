@@ -113,7 +113,8 @@ def make_card(still: Path, caption: str | None, seed: int) -> tuple:
         strip_top = by + ph
         cap = _caption(caption, cw, ch - strip_top, rng)
         paper.paste(cap, (0, strip_top), cap)
-    angle = rng.uniform(3, 8) * rng.choice((-1, 1))
+    # a visual tilt from a seeded generator, so a card looks the same on every render: no security use
+    angle = rng.uniform(3, 8) * rng.choice((-1, 1))  # NOSONAR(S2245)
     out = []
     for pic in (photo, Image.new("RGB", (pw, ph), UNDEVELOPED)):
         card = paper.copy()
@@ -181,11 +182,7 @@ def render_collage(cards, background: Image.Image, frames: int, fps: float, land
     """Write the collage segment: `frames` frames at fps, card k starting to drop at frame land_at[k] (negative = already
     mid-drop at the first frame); card_w = card width in px of the 1080 frame (None = auto_size); develop_s 0 = no developing."""
     spots = _layout(len(cards), seed, card_w)
-    sized = []
-    for (dev, blank), (_, _, w) in zip(cards, spots):
-        s = w / (CARD_MM[0] * MM)
-        size = (round(dev.width * s), round(dev.height * s))
-        sized.append((dev.resize(size, Image.LANCZOS), blank.resize(size, Image.LANCZOS)))
+    sized = _size_cards(cards, spots)
     develop = round(develop_s * fps)
     settled, base = 0, background.copy()  # base = backdrop + every card that has landed and developed (they stop changing)
     cmd = ["ffmpeg", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}", "-r", str(fps), "-i", "-",
@@ -199,24 +196,47 @@ def render_collage(cards, background: Image.Image, frames: int, fps: float, land
                 _paste(base, sized[settled][0], spots[settled], 1.0)
                 settled += 1
             frame = base.copy()
-            shake = 0.0
-            for k in range(settled, len(cards)):
-                age = f - land_at[k]
-                if age < 0:
-                    break
-                dev, blank = sized[k]
-                d = min(max((age - LAND / 2) / develop, 0), 1) if develop else 1.0
-                d = d * d * (3 - 2 * d)
-                img = dev if d >= 1 else blank if d <= 0 else Image.blend(blank, dev, d)
-                _paste(frame, img, spots[k], _land_scale(age), alpha=min(1.0, (age + 1) / 3))
-                if LAND * 0.6 <= age < LAND * 0.6 + SHAKE:
-                    shake = max(shake, 1 - (age - LAND * 0.6) / SHAKE)
+            shake = _draw_moving(frame, sized, spots, land_at, settled, f, develop)
             proc.stdin.write(_camera(frame, 1 + push * f / max(frames - 1, 1), shake, f).tobytes())
     finally:
         proc.stdin.close()
         if proc.wait():
             raise RuntimeError(f"ffmpeg failed writing {out_path}")
     return out_path
+
+
+def _size_cards(cards, spots) -> list:
+    """Each (developed, blank) card pair scaled to its spot's width."""
+    sized = []
+    for (dev, blank), (_, _, w) in zip(cards, spots):
+        s = w / (CARD_MM[0] * MM)
+        size = (round(dev.width * s), round(dev.height * s))
+        sized.append((dev.resize(size, Image.LANCZOS), blank.resize(size, Image.LANCZOS)))
+    return sized
+
+
+def _developing(dev, blank, age, develop):
+    """The card `age` frames into its drop: blank until half-way down, then fading into the photo over `develop` frames."""
+    d = min(max((age - LAND / 2) / develop, 0), 1) if develop else 1.0
+    d = d * d * (3 - 2 * d)
+    if d >= 1:
+        return dev
+    if d <= 0:
+        return blank
+    return Image.blend(blank, dev, d)
+
+
+def _draw_moving(frame, sized, spots, land_at, settled, f, develop) -> float:
+    """Paste the cards still dropping or developing at frame f onto frame; returns the camera shake of the latest landing."""
+    shake = 0.0
+    for k in range(settled, len(sized)):
+        age = f - land_at[k]
+        if age < 0:
+            break
+        _paste(frame, _developing(*sized[k], age, develop), spots[k], _land_scale(age), alpha=min(1.0, (age + 1) / 3))
+        if LAND * 0.6 <= age < LAND * 0.6 + SHAKE:
+            shake = max(shake, 1 - (age - LAND * 0.6) / SHAKE)
+    return shake
 
 
 def _paste(canvas, img, spot, scale, alpha=1.0):

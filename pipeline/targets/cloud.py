@@ -259,7 +259,7 @@ class CloudTarget(Target):
     def _finish_async(self, j, done_q) -> None:
         try:
             self._finish(j)
-        except Exception as e:  # noqa: BLE001  (a failed download must not lose the other stages)
+        except Exception as e:  # noqa: BLE001  # a failed download must not lose the other stages
             j.error = f"{type(e).__name__}: {e}"
         j.waited = time.time() - j.handle["t0"]
         done_q.put(j)

@@ -15,8 +15,11 @@ const SLOT_HELP: Record<VoiceSlot, string> = {
 };
 const SLOTS: VoiceSlot[] = ["voice", "delivery", "moans", "sound"];
 
-export const sampleUrl = (e: VoiceEntry) => e.sample && e.sample_mtime
-  ? `/api/projects/${e.sample.project}/files/${e.sample.folder ? `${e.sample.folder}/` : ""}videos/stage_${e.sample.stage}.mp4?v=${e.sample_mtime}` : null;
+export function sampleUrl(e: VoiceEntry): string | null {
+  if (!e.sample || !e.sample_mtime) return null;
+  const folder = e.sample.folder ? e.sample.folder + "/" : "";
+  return `/api/projects/${e.sample.project}/files/${folder}videos/stage_${e.sample.stage}.mp4?v=${e.sample_mtime}`;
+}
 
 /** Plays the voice's sample clip (sound on); a second click stops it. */
 export function SampleButton({ e }: { readonly e: VoiceEntry }) {

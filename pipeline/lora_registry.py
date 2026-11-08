@@ -182,13 +182,26 @@ def _local_listing():
 
 def _where(kind: str, spec: dict, local) -> str:
     """'cloud+local', 'local only', ... with a MISSING mark when the local ComfyUI is up and lacks an image file."""
-    where = "local only" if spec.get("cloud") is False else ("cloud" if kind == "video" else "cloud+local")
+    if spec.get("cloud") is False:
+        where = "local only"
+    else:
+        where = "cloud" if kind == "video" else "cloud+local"
     if kind == "image" and local is not None:
         from targets.models import local_lora
         lacking = [k for k in IMAGE_PASSES if spec.get(k) and local_lora(spec[k], krea=k == "krea") not in local]
         if lacking:
             where += f" (MISSING locally: {', '.join(lacking)})"
     return where
+
+
+def _catalog_entry(kind: str, n: str, s: dict, local) -> list:
+    """One switched-on LoRA's catalog lines: name, category, strength, where it runs, note; then its tips."""
+    dial = f"{s['min']}..{s['max']}" if "min" in s else f"{s.get('suggested', 1.0)}"
+    eng = f", {s['engine']}" if s.get("engine", "minimax") != "minimax" else ""
+    lines = [f"- {n} [{s.get('category', 'concept')}{eng}] {dial}, {_where(kind, s, local)}: {s.get('note', '')}"]
+    if s.get("tips"):
+        lines.append("    tips: " + " ".join(s["tips"].split()))
+    return lines
 
 
 def catalog() -> str:
@@ -200,13 +213,8 @@ def catalog() -> str:
     for kind, field in (("image", "loras"), ("video", "video_loras")):
         out.append(f"\n## {kind} -> stage `{field}`")
         for n, s in data[kind].items():
-            if s.get("disabled"):
-                continue
-            dial = f"{s['min']}..{s['max']}" if "min" in s else f"{s.get('suggested', 1.0)}"
-            eng = f", {s['engine']}" if s.get("engine", "minimax") != "minimax" else ""
-            out.append(f"- {n} [{s.get('category', 'concept')}{eng}] {dial}, {_where(kind, s, local)}: {s.get('note', '')}")
-            if s.get("tips"):
-                out.append("    tips: " + " ".join(s["tips"].split()))
+            if not s.get("disabled"):
+                out += _catalog_entry(kind, n, s, local)
     on = {k: set(data[k]) - disabled(k) for k in KINDS}
     combos = [f"- {n} ({c['kind']}): {', '.join(f'{m} {v}' for m, v in c['loras'].items())}. {c.get('note', '')}"
               for n, c in data["combos"].items() if set(c["loras"]) <= on[c["kind"]]]

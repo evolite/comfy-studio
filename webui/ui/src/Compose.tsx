@@ -37,7 +37,8 @@ function loadSeenEdits(project: string): SeenEdits {
 /** The folder picked when the current one can't be cut. Mix: the one with the most approved clips (interp/ over a stray approved clip elsewhere). */
 function bestFolder(mode: Mode, eligible: string[], progress: (f: string) => Progress): string {
   // the folder with the most approved; among equals finish, then hires
-  const rank = (f: string) => progress(f).done * 4 + (f === "finish" ? 2 : f === "hires" ? 1 : 0);
+  const bonus: Record<string, number> = { finish: 2, hires: 1 };
+  const rank = (f: string) => progress(f).done * 4 + (bonus[f] ?? 0);
   return [...eligible].sort((a, b) => rank(b) - rank(a))[0];
 }
 
@@ -101,7 +102,11 @@ function followStageOrder(seq: number[], order: number[]): number[] {
   const sorted = order.filter((id) => firsts.has(id));
   const seen = new Set<number>();
   let k = 0;
-  return seq.map((id) => { if (seen.has(id)) return id; seen.add(id); return sorted[k++]; });
+  return seq.map((id) => {
+    if (seen.has(id)) return id;
+    seen.add(id);
+    return sorted[k++];
+  });
 }
 
 /** The project's full stage order with the timeline's stages put in the timeline's order (the others keep their places). */
@@ -459,7 +464,7 @@ export default function Compose({ name }: { readonly name: string }) {
   });
   const [zoom, setZoom] = useState(false);
   const pkey = `composePolaroid:${name}`;
-  const [polSaved, setPol] = useState<Polaroid>(() => ({ ...NO_POLAROID, ...loadJson<Partial<Polaroid>>(pkey, {}), collage: [] }));
+  const [polSaved, setPolSaved] = useState<Polaroid>(() => ({ ...NO_POLAROID, ...loadJson<Partial<Polaroid>>(pkey, {}), collage: [] }));
   useEffect(() => store(pkey, { on: polSaved.on, picked: polSaved.picked, size: polSaved.size, beats: polSaved.beats, sounds: polSaved.sounds, svol: polSaved.svol }), [pkey, polSaved]);
   const [play, setPlay] = useState<string | null>(null);
   const [msg, setMsg] = useState("");
@@ -570,7 +575,7 @@ export default function Compose({ name }: { readonly name: string }) {
       <section className="card cmp-card">
         <SoundHead noMusic={noMusic} onSwitch={(none) => void saveMusic({ none: none || undefined })} />
         {noMusic ? <ScenarioControls name={name} /> : <BeatControls music={music} audio={audio} opts={opts} setOpts={setOpts} setO={setO} num={num} beatsFile={beatsFile} fit={fit} mode={mode} zoom={zoom} setZoom={setZoom} clipAudio={clipAudio} setClipAudio={setClipAudio} />}
-        <PolaroidControls pol={pol} setPol={setPol} stills={collageStills} cfolder={cfolder} noMusic={noMusic} />
+        <PolaroidControls pol={pol} setPol={setPolSaved} stills={collageStills} cfolder={cfolder} noMusic={noMusic} />
       </section>
 
       <section className="card cmp-card cmp-render">

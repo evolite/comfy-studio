@@ -77,12 +77,14 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))  # repo root: config.py
 import config  # noqa: E402
-import polaroid  # noqa: E402  (video/, beside this file)
+import polaroid  # noqa: E402  # video/, beside this file
 FPS = 30  # the edit's frame rate; make_tiktok() raises it to HI_FPS when every clip is interpolated (edit_fps)
 HI_FPS = 48  # RIFE x2 of the 24 fps i2v clips (video/interpolate.py): render at their own rate, no frame dropping
 FADE_OUT = 0.5  # seconds the music fades out over at the end of the edit (--fade-out; 0 = hard stop)
 TRIM_START = 0.2  # seconds cut from the start of every video clip (i2v ramp-up); stills are untouched
 WIDTH, HEIGHT = 1080, 1920
+AFMT = "aformat=sample_rates=48000:channel_layouts=stereo"  # every audio input is brought to this before mixing
+AOUT = "[aout]"  # the filter graph's final audio pad
 # zoompan snaps its crop window to whole pixels each frame, so zooming/panning a
 # 1080-wide frame makes edges crawl/shimmer and punch-ins soft. Zoom on a frame
 # SUPERSAMPLE x larger and let zoompan scale down to the output size instead.
@@ -469,7 +471,7 @@ def mux(clip_paths, build_dir, audio, audio_start, total_dur, out_path, voices=(
         return
     # inputs: 0 = picture, 1 = music, 2.. = one per voiced appearance
     inputs = ["-i", str(silent), "-ss", str(audio_start), "-i", str(audio)]
-    fmt = "aformat=sample_rates=48000:channel_layouts=stereo"
+    fmt = AFMT
     chains = []
     for k, (clip, start, edit_len, src_start, src_len, tempo) in enumerate(voices):
         inputs += ["-i", str(clip)]
@@ -488,7 +490,7 @@ def mux(clip_paths, build_dir, audio, audio_start, total_dur, out_path, voices=(
         ])
     else:
         chains.append(f"[music][voice]amix=inputs=2:normalize=0:duration=first,alimiter=limit=0.95{',' + fade_f if fade_f else ''}[aout]")
-    subprocess.run(["ffmpeg", "-y", *inputs, "-filter_complex", ";".join(chains), "-map", "0:v", "-map", "[aout]",
+    subprocess.run(["ffmpeg", "-y", *inputs, "-filter_complex", ";".join(chains), "-map", "0:v", "-map", AOUT,
                     "-t", str(total_dur), "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", str(out_path), "-loglevel", "error"], check=True)
 
 
@@ -596,7 +598,7 @@ def add_card_sounds(out_path: Path, times, volume, seed=0):
     files, rng = card_sound_files(), np.random.default_rng(seed)
     deck = []
     inputs, chains = ["-i", str(out_path)], []
-    fmt = "aformat=sample_rates=48000:channel_layouts=stereo"
+    fmt = AFMT
     for k, t in enumerate(times):
         if not deck:
             deck = list(rng.permutation(len(files)))
@@ -612,7 +614,7 @@ def add_card_sounds(out_path: Path, times, volume, seed=0):
     chains.append(f"[main]{''.join(f'[s{k}]' for k in range(n))}amix=inputs={n + 1}:normalize=0:duration=first,"
                   f"alimiter=limit=0.95[aout]")
     tmp = out_path.with_name(out_path.stem + ".sfx.mp4")
-    subprocess.run(["ffmpeg", "-y", *inputs, "-filter_complex", ";".join(chains), "-map", "0:v", "-map", "[aout]",
+    subprocess.run(["ffmpeg", "-y", *inputs, "-filter_complex", ";".join(chains), "-map", "0:v", "-map", AOUT,
                     "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", str(tmp), "-loglevel", "error"], check=True)
     os.replace(tmp, out_path)
     print(f"  card sounds: {n} from {len(files)} file(s) in {config.POLAROID_SFX_DIR}", flush=True)
@@ -635,17 +637,102 @@ def beat_collage(beat_times, audio_start, start_frame, n, every):
     return frame(b0 + (n - 1) * every + COLLAGE_HOLD_BEATS), land_at
 
 
+def _apply_opts(opts):
+    """Set the module-wide per-edit state (trims, polaroid look) from the options."""
+    TRIMS.clear()
+    TRIMS.update(opts.trims or {})
+    TRIMS_END.clear()
+    TRIMS_END.update(opts.trims_end or {})
+    _set_polaroid(opts)
+
+
+def _load_music(beat_times_file, start_time, audio):
+    """(beat_times, start_time, audio file): the start time defaults to the beat file's; the audio to the mp3 beside it."""
+    beat_times_file = config.data_path(beat_times_file)  # relative paths (audio/<Song>.json) live in the data dir
+    beat_times, file_start = load_beats(beat_times_file)
+    start_time = file_start if start_time is None else start_time
+    if start_time is None:
+        raise ValueError(f"{beat_times_file} has no start_time; pass --start-time")
+    audio = config.data_path(audio) if audio else Path(beat_times_file).with_suffix(".mp3")
+    if not audio.is_file():
+        raise FileNotFoundError(f"no audio: pass --audio, or put {audio.name} next to the beat file")
+    return beat_times, start_time, audio
+
+
+def _timing(punch, start_time, lead_in_seconds):
+    """(audio_start, lead_in): the music plays from the start time; the stage-1 lead-in fills up to the first cut's beat.
+    No lead-in asked for: the edit opens on that beat."""
+    audio_start = punch if lead_in_seconds <= 0 else max(0.0, min(start_time, punch))
+    return audio_start, punch - audio_start
+
+
+def _stretch_to_fill(cuts):
+    """One cut per stage: slow each clip so it fills its cut exactly (never freeze)."""
+    for c in cuts:
+        if not c.lead_in and c.clip.suffix != ".png":
+            c.stretch = c.frames / FPS / usable_duration(c.clip)
+
+
+def _subcut_counts(body_clips, subcuts_per_image, avg_cut_dur) -> list:
+    """Scale each stage's cut count to its own clip length instead of a fixed subcuts_per_image everywhere, so a longer
+    i2v render actually gets shown instead of mostly sitting unused behind a couple of cuts. Stills have no inherent
+    duration to scale against, so they keep the flat --subcuts-per-image count."""
+    def count(clip):
+        if clip.suffix == ".png" or subcuts_per_image == 1:
+            return 1 if POLAROID else subcuts_per_image
+        return max(1, min(MAX_SUBCUTS_PER_STAGE, round(usable_duration(clip) / avg_cut_dur)))
+    return [count(clip) for clip in body_clips]
+
+
+def _one_cut_beats(body_clips, beats_per_cut, avg_beat, last_weight) -> list:
+    """One cut per stage: hold each clip for its whole length, rounded to whole beats."""
+    beats = [fit_beats(usable_duration(c), avg_beat) if c.suffix != ".png" else beats_per_cut for c in body_clips]
+    if body_clips[-1].suffix != ".png":
+        # Final hold: last_weight x the beats, but no longer than the clip can be slowed to fill.
+        cap = 2 * int(MAX_STRETCH * usable_duration(body_clips[-1]) / avg_beat / 2)
+        beats[-1] = max(beats[-1], min(2 * round(beats[-1] * last_weight / 2), cap))
+    return beats
+
+
+def _render_cuts(cuts, build_dir, zoom) -> list:
+    """Render every cut to its own file in parallel (zoompan is single-threaded; cuts are independent), in cut order."""
+    names = _cut_names(cuts)
+
+    def render(item):
+        i, cut = item
+        path = build_dir / f"{names[i]}.mp4"
+        build_clip(cut, path, zoom)
+        return path
+
+    with ThreadPoolExecutor(max_workers=len(_render_pool())) as pool:
+        return list(pool.map(render, enumerate(cuts)))  # map keeps cut order for the concat
+
+
+def _mux_and_sounds(cuts, clip_paths, build_dir, audio, audio_start, total_frames, out_path, collage, opts):
+    """Lay the music (and the clips' own audio) under the picture, then the card sounds."""
+    voices = voice_segments(cuts, set(opts.mute_clip_audio)) if opts.clip_audio else []
+    if opts.clip_audio:
+        print(f"  clip audio: {len(voices)} of {len({c.seg for c in cuts})} clips carry sound (music x{opts.music_volume}, "
+              f"voice x{opts.clip_volume}, duck {opts.duck})", flush=True)
+    mux(clip_paths, build_dir, audio, audio_start, total_frames / FPS, out_path, voices, opts.clip_volume, opts.music_volume,
+        opts.duck, opts.fade_out)
+    if not opts.card_sounds:
+        return
+    if collage:
+        times = card_times(cuts, collage_land=collage[1], collage_start=total_frames - collage[0])
+    else:
+        times = card_times(cuts)
+    if times:
+        add_card_sounds(out_path, times, opts.card_sound_volume, seed=len(times))
+
+
 def make_tiktok(pipeline_dir, out_name=None, audio=None, beat_times_file=DEFAULT_BEAT_TIMES,
                 start_time=None, lead_in_seconds=2.0, subcuts_per_image=2, beats_per_cut=2,
                 last_weight=2.0, zoom=None, stills=False, order=None, opts: EditOptions = None) -> Path:
     """Beat-synced edit over the music (see the module docstring)."""
     global FPS
     opts = opts or EditOptions()
-    TRIMS.clear()
-    TRIMS.update(opts.trims or {})
-    TRIMS_END.clear()
-    TRIMS_END.update(opts.trims_end or {})
-    _set_polaroid(opts)
+    _apply_opts(opts)
     clips = stage_sources(pipeline_dir, stills, order, opts.as_still, opts.stills_from)
     if len(clips) < 2:
         raise FileNotFoundError(f"Need at least 2 stages (clips or stills) in {pipeline_dir}")
@@ -656,52 +743,24 @@ def make_tiktok(pipeline_dir, out_name=None, audio=None, beat_times_file=DEFAULT
     if collage_files:
         last_weight = 1.0  # the pile is the ending: no long final hold before it
 
-    beat_times_file = config.data_path(beat_times_file)  # relative paths (audio/<Song>.json) live in the data dir
-    beat_times, file_start = load_beats(beat_times_file)
-    start_time = file_start if start_time is None else start_time
-    if start_time is None:
-        raise ValueError(f"{beat_times_file} has no start_time; pass --start-time")
-    audio = config.data_path(audio) if audio else Path(beat_times_file).with_suffix(".mp3")
-    if not audio.is_file():
-        raise FileNotFoundError(f"no audio: pass --audio, or put {audio.name} next to the beat file")
+    beat_times, start_time, audio = _load_music(beat_times_file, start_time, audio)
     first_cut = start_time + lead_in_seconds  # the cuts start on the first beat after the lead-in
     punch_start = beat_times[min(bisect.bisect_left(beat_times, first_cut), len(beat_times) - 1)]
 
-    def timing(punch):
-        """(audio_start, lead_in): the music plays from the start time; the stage-1 lead-in fills up to the first cut's beat.
-        No lead-in asked for: the edit opens on that beat."""
-        audio_start = punch if lead_in_seconds <= 0 else max(0.0, min(start_time, punch))
-        return audio_start, punch - audio_start
-    audio_start, lead_in = timing(punch_start)
+    audio_start, lead_in = _timing(punch_start, start_time, lead_in_seconds)
 
-    # Scale each stage's cut count to its own clip length instead of a fixed subcuts_per_image everywhere, so a longer
-    # i2v render actually gets shown instead of mostly sitting unused behind a couple of cuts. Stills have no inherent
-    # duration to scale against, so they keep the flat --subcuts-per-image count.
     avg_beat = (beat_times[-1] - beat_times[0]) / (len(beat_times) - 1)
-    avg_cut_dur = beats_per_cut * avg_beat
     body_clips = clips[1:] if lead_in > 0 else clips
-    subcut_counts = [
-        (1 if POLAROID else subcuts_per_image) if clip.suffix == ".png" or subcuts_per_image == 1
-        else max(1, min(MAX_SUBCUTS_PER_STAGE, round(usable_duration(clip) / avg_cut_dur)))
-        for clip in body_clips
-    ]
+    subcut_counts = _subcut_counts(body_clips, subcuts_per_image, beats_per_cut * avg_beat)
     n_cuts = sum(subcut_counts)
-    # One cut per stage: hold each clip for its whole length, rounded to whole beats.
     one_cut = subcuts_per_image == 1
-    cut_beats = ([fit_beats(usable_duration(c), avg_beat) if c.suffix != ".png" else beats_per_cut for c in body_clips]
-                 if one_cut else beats_per_cut)
-    if one_cut and body_clips[-1].suffix != ".png":
-        # Final hold: last_weight x the beats, but no longer than the clip can be slowed to fill.
-        cap = 2 * int(MAX_STRETCH * usable_duration(body_clips[-1]) / avg_beat / 2)
-        cut_beats[-1] = max(cut_beats[-1], min(2 * round(cut_beats[-1] * last_weight / 2), cap))
+    cut_beats = _one_cut_beats(body_clips, beats_per_cut, avg_beat, last_weight) if one_cut else beats_per_cut
     punch_start, durations = beat_cut_durations(beat_times, first_cut, n_cuts, cut_beats, 1.0 if one_cut else last_weight, fit_grid=one_cut)
     if one_cut:
-        audio_start, lead_in = timing(punch_start)
+        audio_start, lead_in = _timing(punch_start, start_time, lead_in_seconds)
     cuts = plan_cuts(clips, lead_in, durations, subcut_counts, punch_in=zoom is not None)
     if one_cut:
-        for c in cuts:
-            if not c.lead_in and c.clip.suffix != ".png":
-                c.stretch = c.frames / FPS / usable_duration(c.clip)  # fill the cut exactly: never freeze
+        _stretch_to_fill(cuts)
     total_frames = sum(c.frames for c in cuts)
     collage = beat_collage(beat_times, audio_start, total_frames, len(collage_files), opts.collage_beats) if collage_files else None
     if collage:
@@ -716,31 +775,13 @@ def make_tiktok(pipeline_dir, out_name=None, audio=None, beat_times_file=DEFAULT
     build_dir = pipeline_dir / "_debug" / "tiktok_build_beatsync_dynamic_video_flare"
     shutil.rmtree(build_dir, ignore_errors=True)  # no stale cuts from a previous layout
     build_dir.mkdir(parents=True)
-    names = _cut_names(cuts)
-
-    def render(item):
-        i, cut = item
-        path = build_dir / f"{names[i]}.mp4"
-        build_clip(cut, path, zoom)
-        return path
-
-    with ThreadPoolExecutor(max_workers=len(_render_pool())) as pool:  # zoompan is single-threaded; cuts are independent files
-        clip_paths = list(pool.map(render, enumerate(cuts)))  # map keeps cut order for the concat
+    clip_paths = _render_cuts(cuts, build_dir, zoom)
     if collage:
         clip_paths.append(build_collage(collage_files, *collage, build_dir / "cut_999_collage.mp4", opts.card_size))
 
     out_path = _out_path(pipeline_dir, out_name)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    voices = voice_segments(cuts, set(opts.mute_clip_audio)) if opts.clip_audio else []
-    if opts.clip_audio:
-        print(f"  clip audio: {len(voices)} of {len({c.seg for c in cuts})} clips carry sound (music x{opts.music_volume}, "
-              f"voice x{opts.clip_volume}, duck {opts.duck})", flush=True)
-    mux(clip_paths, build_dir, audio, audio_start, total_frames / FPS, out_path, voices, opts.clip_volume, opts.music_volume,
-        opts.duck, opts.fade_out)
-    if opts.card_sounds:
-        times = card_times(cuts, collage_land=collage[1] if collage else (), collage_start=total_frames - collage[0] if collage else None)
-        if times:
-            add_card_sounds(out_path, times, opts.card_sound_volume, seed=len(times))
+    _mux_and_sounds(cuts, clip_paths, build_dir, audio, audio_start, total_frames, out_path, collage, opts)
     print(f"  -> {out_path}")
     return out_path
 
@@ -803,7 +844,7 @@ def scenario_mux(cut_paths, cuts, t_frames, transition, out_path, muted=(), clip
     total_frames = sum(c.frames for c in cuts) - (n - 1) * t_frames
     total, d = total_frames / FPS, t_frames / FPS
     inputs, chains = [], []
-    fmt = "aformat=sample_rates=48000:channel_layouts=stereo"
+    fmt = AFMT
     for k, c in enumerate(cuts):  # input k = cut k (a clip seeked past its trim, or a still's pre-rendered file)
         inputs += _scenario_input(k, c, cut_paths, lens, fmt, muted, clip_volume, chains)
     if t_frames == 0:
@@ -818,7 +859,7 @@ def scenario_mux(cut_paths, cuts, t_frames, transition, out_path, muted=(), clip
         chains.append(f"[{a}]anull[aj]")
     _fade_chains(total, fade_in, fade_out, chains)
 
-    subprocess.run(["ffmpeg", "-y", *inputs, "-filter_complex", ";".join(chains), "-map", "[vout]", "-map", "[aout]",
+    subprocess.run(["ffmpeg", "-y", *inputs, "-filter_complex", ";".join(chains), "-map", "[vout]", "-map", AOUT,
                     "-frames:v", str(total_frames), "-t", f"{total:.4f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
                     "-r", str(FPS), "-c:a", "aac", "-b:a", "192k", str(out_path), "-loglevel", "error"], check=True)
     return total_frames

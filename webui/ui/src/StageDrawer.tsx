@@ -179,7 +179,7 @@ export default function StageDrawer({ project, stage, stages, onClose, onNav, in
   const motion = draft.motion ?? "";
   const usedSlots = voiceSlotsIn(motion);
   // other speakers' voices ({"S2": name}, stage else project); a speaker without one uses S1's
-  const castNames: Record<string, string> = { ...(projCfg?.voices ?? {}), ...(draft.voices ?? {}), ...(voiceName ? { S1: voiceName } : {}) };
+  const castNames: Record<string, string> = { ...projCfg?.voices, ...draft.voices, ...(voiceName ? { S1: voiceName } : undefined) };
   const cast: VoiceCast = Object.fromEntries(Object.entries(castNames).map(([sp, n]) => [sp, voiceLib?.voices[n]]));
   const s2Name = castNames.S2 ?? "";
   const nameOf = (sp: string) => castNames[sp] ?? voiceName;

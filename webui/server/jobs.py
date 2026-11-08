@@ -21,10 +21,10 @@ from pathlib import Path
 
 import config
 from projects import PREVIEW_GATED, ROOT, ApiError, load, preview_approved, project_dir
-import voice_registry  # noqa: E402  (pipeline/, on sys.path via projects)
+import voice_registry  # noqa: E402  # pipeline/, on sys.path via projects
 
 sys.path.insert(0, str(ROOT / "pipeline"))
-import comfy_api  # noqa: E402  (cloud base URL + key; cancel needs to reach the Comfy queue)
+import comfy_api  # noqa: E402  # cloud base URL + key; cancel needs to reach the Comfy queue
 import runpod_pod  # noqa: E402
 import steps  # noqa: E402
 

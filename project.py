@@ -162,15 +162,14 @@ def by_id(stages):
     return {s.get("id", pos): s for pos, s in enumerate(stages, 1)}
 
 
-def _default_duration(i, first, last) -> float:
+def _default_duration(i, last) -> float:
     """A stage without an explicit duration: 2 s, the closing shot a little longer (clips aim for 2-4 s)."""
     return 2.9 if i == last else 2.0
 
 
 def stage_duration(stages, i, engine=animate_pipeline.DEFAULT_ENGINE):
     ids = by_id(stages)
-    first, last = next(iter(ids)), next(reversed(ids))
-    v = ids[i].get("duration") or _default_duration(i, first, last)
+    v = ids[i].get("duration") or _default_duration(i, next(reversed(ids)))
     if not isinstance(v, (int, float)) or not MIN_DURATION <= v <= MAX_DURATION:
         sys.exit(f"stage {i}: duration {v!r} must be a number of seconds between {MIN_DURATION} and {MAX_DURATION}")
     return {"duration_value": v, "tier_frames": animate_pipeline.frames(engine, v)}
@@ -550,6 +549,41 @@ def cmd_status(a):
               + (f"  [{s['video_engine']}]" if s.get("video_engine") else ""))
 
 
+def _voice_info(s, cfg):
+    """The stage's voice as `show` prints it: name, where it comes from, the other speakers and the expanded motion."""
+    cast = voice_registry.cast_of(s, cfg)
+    if not cast:
+        return None
+    voice = {"name": voice_registry.voice_of(s, cfg), "from": "stage" if s.get("voice") else "project"}
+    if set(cast) - {"S1"}:
+        voice["speakers"] = cast
+    if voice_registry.PLACEHOLDER.search(s.get("motion", "")):
+        bad = voice_registry.problems(s["motion"], cast)
+        voice["expanded_motion"] = "; ".join(bad) if bad else voice_registry.expand(s["motion"], cast)
+    return voice
+
+
+def _stage_outputs(d, folders, n):
+    """{folder: {"still"/"clip": {path, mtime}}} of the stage's files, the project root as "root"."""
+    outputs = {}
+    for f in folders:
+        got = {k: {"path": str(x.relative_to(d)), "mtime": int(x.stat().st_mtime)}
+               for k, x in (("still", f / f"stage_{n}.png"), ("clip", f / "videos" / f"stage_{n}.mp4")) if x.exists()}
+        if got:
+            outputs[str(f.relative_to(d)) if f != d else "root"] = got
+    return outputs
+
+
+def _show_stage(d, cfg, s, n, folders, graphs):
+    own = re.compile(rf"(?:^|_)stage_{n}(?:_|$)")
+    off = lora_registry.disabled_in(s.get("loras"), "image") + lora_registry.disabled_in(s.get("video_loras"), "video")
+    return {"stage": s, "video_engine": video_engine(cfg, s), "voice": _voice_info(s, cfg),
+            **({"switched_off_loras": off} if off else {}),  # retired on the LoRAs page: swap them (pipeline/lora_registry.py)
+            "outputs": _stage_outputs(d, folders, n),
+            "takes": [{k: t[k] for k in ("id", "current", "source", "delta")} for t in takes.listing(d, n)],
+            "debug_graphs": [str(g.relative_to(d)) for g in graphs if own.search(g.parent.name)][:10]}  # newest first
+
+
 def cmd_show(a):
     """Read-only: no LoRA/engine validation, so a stage with a broken name can still be looked up and fixed."""
     d, cfg = project(a.name)
@@ -557,37 +591,11 @@ def cmd_show(a):
     missing = [n for n in a.stage if n not in ids]
     if missing:
         sys.exit(f"{a.name}: no stage {', '.join(map(str, missing))} (ids: {', '.join(map(str, ids))})")
-    rel = lambda p: str(p.relative_to(d))
     folders = [d] + sorted(f for f in d.iterdir() if f.is_dir() and not f.name.startswith("_"))
     graphs = sorted(d.glob("**/_debug/*/graph.json"), key=lambda g: g.stat().st_mtime, reverse=True)
-
-    def stage(n):
-        s = ids[n]
-        outputs = {}
-        for f in folders:
-            got = {k: {"path": rel(x), "mtime": int(x.stat().st_mtime)}
-                   for k, x in (("still", f / f"stage_{n}.png"), ("clip", f / "videos" / f"stage_{n}.mp4")) if x.exists()}
-            if got:
-                outputs[rel(f) if f != d else "root"] = got
-        own = re.compile(rf"(?:^|_)stage_{n}(?:_|$)")
-        eng = video_engine(cfg, s)
-        vname, cast = voice_registry.voice_of(s, cfg), voice_registry.cast_of(s, cfg)
-        voice = {"name": vname, "from": "stage" if s.get("voice") else "project"} if cast else None
-        if voice and set(cast) - {"S1"}:
-            voice["speakers"] = cast
-        if voice and voice_registry.PLACEHOLDER.search(s.get("motion", "")):
-            bad = voice_registry.problems(s["motion"], cast)
-            voice["expanded_motion"] = "; ".join(bad) if bad else voice_registry.expand(s["motion"], cast)
-        off = lora_registry.disabled_in(s.get("loras"), "image") + lora_registry.disabled_in(s.get("video_loras"), "video")
-        return {"stage": s, "video_engine": eng, "voice": voice,
-                **({"switched_off_loras": off} if off else {}),  # retired on the LoRAs page: swap them (pipeline/lora_registry.py)
-                "outputs": outputs,
-                "takes": [{k: t[k] for k in ("id", "current", "source", "delta")} for t in takes.listing(d, n)],
-                "debug_graphs": [rel(g) for g in graphs if own.search(g.parent.name)][:10]}  # newest first
-
     out = {"name": a.name, "dir": str(d), "ref": f"@{a.name}",
            **{k: cfg.get(k) for k in ("engine", "video_engine", "voice", "oneoff", "music", "settings") if k in cfg},
-           "stage_ids": list(ids), "stages": {n: stage(n) for n in (a.stage or ids)}}
+           "stage_ids": list(ids), "stages": {n: _show_stage(d, cfg, ids[n], n, folders, graphs) for n in (a.stage or ids)}}
     print(json.dumps(out, indent=2, ensure_ascii=False))
 
 

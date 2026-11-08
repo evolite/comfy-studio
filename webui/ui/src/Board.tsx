@@ -957,6 +957,27 @@ function StageBadges({ s, doneKey }: { readonly s: Stage; readonly doneKey: stri
   </>;
 }
 
+/** The stage's still/clip slots this view shows, in display order. */
+function stageSlots(p: Project, id: number, phase: Phase, folder: string, hidden: Set<string>, hideKind: Set<string>, clipFrom: string): Slot[] {
+  const slots = Object.entries(p.folders).flatMap(([f, st]) => {
+    const row: Slot[] = [];
+    if (st.stills[id] && wantSlot(phase, folder, f, "still", hidden, hideKind, clipFrom)) row.push({ f, kind: "still", v: st.stills[id] });
+    if (st.clips[id] && wantSlot(phase, folder, f, "clip", hidden, hideKind, clipFrom)) row.push({ f, kind: "clip", v: st.clips[id] });
+    return row;
+  });
+  sortSlots(slots, phase);
+  return slots;
+}
+
+/** A stage card's class list: "stage", a class per flag that is on, and the busy class. */
+function stageClass(flags: Record<"selecting" | "cur" | "fresh" | "sel" | "done" | "dragging" | "dropover", boolean>, busy?: Active): string {
+  const names = { selecting: "selecting", cur: "cur", fresh: "fresh", sel: "sel", done: "isdone", dragging: "dragging", dropover: "dropover" };
+  const on = (Object.keys(names) as (keyof typeof names)[]).filter((k) => flags[k]).map((k) => names[k]);
+  return ["stage", ...on, stageBusyClass(busy)].filter(Boolean).join(" ");
+}
+
+const emptyText = (busy?: Active) => (busy && !busy.queued ? "rendering…" : "—");
+
 function StageRow({ p, s, seen, onSeen, folder, clipFrom, phase, doneKey, cur, onCur, hidden, hideKind, onDone, sel, selecting, busy, onToggle, onEdit, onOpen, onGo, disabledWhy, takes, pendingTakes, onOpenTake, onUseTake, onClearTakes, dragging, onDrag, onDropOn }: {
   readonly p: Project; readonly s: Stage; readonly seen: Seen; readonly onSeen: (...marks: [string, number][]) => void; readonly folder: string; readonly clipFrom: string; readonly phase: Phase; readonly doneKey: string; readonly cur: boolean; readonly onCur: () => void; readonly onDone: () => void; readonly hidden: Set<string>; readonly hideKind: Set<string>; readonly sel: boolean; readonly selecting: boolean; readonly busy?: Active; readonly onToggle: (range: boolean) => void; readonly onEdit: () => void;
   readonly onOpen: (id: number, folder: string, kind: "still" | "clip") => void; readonly onGo: (a: string, folder?: string) => void;
@@ -966,13 +987,7 @@ function StageRow({ p, s, seen, onSeen, folder, clipFrom, phase, doneKey, cur, o
 }) {
   const [versions, setVersions] = useState(false);
   const [over, setOver] = useState(false);
-  const slots = Object.entries(p.folders).flatMap(([f, st]) => {
-    const row: Slot[] = [];
-    if (st.stills[s.id] && wantSlot(phase, folder, f, "still", hidden, hideKind, clipFrom)) row.push({ f, kind: "still", v: st.stills[s.id] });
-    if (st.clips[s.id] && wantSlot(phase, folder, f, "clip", hidden, hideKind, clipFrom)) row.push({ f, kind: "clip", v: st.clips[s.id] });
-    return row;
-  });
-  sortSlots(slots, phase);
+  const slots = stageSlots(p, s.id, phase, folder, hidden, hideKind, clipFrom);
   const review = isReview(phase);
   const done = doneIn(s, doneKey);
   // something landed for this stage (a new still/clip) since you last clicked it
@@ -981,6 +996,7 @@ function StageRow({ p, s, seen, onSeen, folder, clipFrom, phase, doneKey, cur, o
   const others = takes.filter((t) => !t.current);
   const takeSeen = seen.slots[slotKey(s.id, "takes", "still")] ?? seen.baseline;
   const fresh = slots.some(isNew) || (phase === "preview" && others.some((t) => t.mtime > takeSeen));
+  const dropTarget = dragging !== null && dragging !== s.id;
   // selection mode (something is selected): a click anywhere on the card toggles it instead of acting; the checkbox handles its own
   const selectClick = (e: MouseEvent) => {
     if ((e.target as Element).closest(".chk")) return;
@@ -991,10 +1007,10 @@ function StageRow({ p, s, seen, onSeen, folder, clipFrom, phase, doneKey, cur, o
   return (
     <div id={`stage-${s.id}`} onPointerDownCapture={() => onCur()}
       onClickCapture={selecting ? selectClick : undefined}
-      onDragOver={dragging !== null && dragging !== s.id ? (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; if (!over) setOver(true); } : undefined}
+      onDragOver={dropTarget ? (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; setOver(true); } : undefined}
       onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setOver(false); }}
-      onDrop={(e) => { e.preventDefault(); setOver(false); if (dragging !== null && dragging !== s.id) onDropOn(s.id); }}
-      className={`stage ${selecting ? "selecting" : ""} ${cur && review ? "cur" : ""} ${fresh ? "fresh" : ""} ${sel ? "sel" : ""} ${stageBusyClass(busy)} ${done ? "isdone" : ""} ${dragging === s.id ? "dragging" : ""} ${over && dragging !== null ? "dropover" : ""}`}>
+      onDrop={(e) => { e.preventDefault(); setOver(false); if (dropTarget) onDropOn(s.id); }}
+      className={stageClass({ selecting, cur: cur && review, fresh, sel, done, dragging: dragging === s.id, dropover: over && dragging !== null }, busy)}>
       <div className="head">
         <span className="grab" draggable title="drag to move this stage (order = edit order)" aria-label={`move stage ${s.id}`}
           onDragStart={(e) => { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/x-stage", String(s.id)); e.dataTransfer.setDragImage(e.currentTarget.closest(".stage")!, 20, 20); onDrag(s.id); }}
@@ -1012,7 +1028,7 @@ function StageRow({ p, s, seen, onSeen, folder, clipFrom, phase, doneKey, cur, o
         <MoreMenu p={p} s={s} nOthers={others.length} onEdit={onEdit} onVersions={() => setVersions(true)} onClearTakes={onClearTakes} />
       </div>
       <div className="slots">
-        {slots.length === 0 && <div className="empty dim">{busy && !busy.queued ? "rendering…" : "—"}</div>}
+        {slots.length === 0 && <div className="empty dim">{emptyText(busy)}</div>}
         {slots.map((x) => (
           <SlotFigure key={x.f + x.kind} p={p} sid={s.id} slot={x} phase={phase} doneKey={doneKey} isNew={isNew(x)} onOpen={() => { onSeen([slotKey(s.id, x.f, x.kind), x.v]); onOpen(s.id, x.f, x.kind); }} />
         ))}

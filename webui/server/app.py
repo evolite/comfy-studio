@@ -21,7 +21,7 @@ import comfy_watch
 import config
 import jobs
 from jobs import ACTIONS, edit_timing, manager
-import run_pipeline  # noqa: E402  (pipeline/ is on sys.path via projects)
+import run_pipeline  # noqa: E402  # pipeline/ is on sys.path via projects
 import civitai_meta  # noqa: E402
 import runpod_pod  # noqa: E402
 from targets.models import local_models  # noqa: E402
@@ -65,7 +65,7 @@ def template_defaults():
 def registry():
     keys = {eng: sorted(set(t) | set(sp)) for eng, (t, sp) in P.graph_settings.ENGINE_KEYS.items()}
     sys.path.insert(0, str(ROOT))
-    import project as proj  # noqa: E402  (project.py; models + default settings per engine)
+    import project as proj  # noqa: E402  # project.py; models + default settings per engine
     return {
         "settings_keys": keys,
         "default_settings": {e: proj.new_settings(e) for e in P.graph_settings.ENGINE_KEYS},
@@ -207,7 +207,7 @@ def local_cancel_all():
         _local_post("/queue", {"clear": True})
         _local_post("/interrupt", {})
         cleared = True
-    except Exception:  # noqa: BLE001  (server down: nothing to clear)
+    except Exception:  # noqa: BLE001  # server down: nothing to clear
         pass
     return {"jobs": len(jobs), "comfy_queue_cleared": cleared}
 
