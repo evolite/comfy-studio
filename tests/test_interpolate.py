@@ -40,7 +40,7 @@ def test_cli_picks_clips_without_an_interp_result_and_rejects_missing_ones():
 
 
 def test_the_edit_runs_at_48_fps_only_when_every_clip_is_interpolated(tmp_path):
-    import make_tiktok as mt
+    import make_edit as mt
     a, b = tmp_path / "a.mp4", tmp_path / "b.mp4"
     clip(a, 48)
     clip(b, 24)

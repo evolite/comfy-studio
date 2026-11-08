@@ -20,7 +20,7 @@ config.py      every path/URL/machine setting; library_file / library_merged / s
 pipeline/      image steps: steps.py (preview, il, face, hires, finish, main) run on a target (targets/cloud.py, targets/local.py,
                same interface) through runner.py; engines generate*.py + templates/; graph_settings.py (settings keys);
                takes.py (preview takes); civitai_meta.py (Civitai-ready copies); lora_registry.py, voice_registry.py
-video/         animate_pipeline.py (i2v), interpolate.py (RIFE), make_tiktok.py (edit), templates/
+video/         animate_pipeline.py (i2v), interpolate.py (RIFE), make_edit.py (edit), templates/
 runpod/        the RunPod animate pod's volume (seed.py fills it from the manifest), preflight (check.py), start command
                (watchdog.sh); lifecycle in pipeline/runpod_pod.py
 webui/         web UI + API (FastAPI + React, `webui/ui`, `npm run build`), service `comfy-studio` on :8191 (127.0.0.1, no auth)
@@ -75,7 +75,7 @@ seeds and settings used.
 | ③ Finish | `generate [N..] --finish [--local] [--from hires\|IL]` (SeedVR2, optional) | `finish/` |
 | ④ Animate | `animate [folder] [N..] [--rife] [--target cloud\|runpod]` (paid; `--rife` = Animate + RIFE in the same job) | `<folder>/videos/` (+ `interp/videos/` with `--rife`) |
 | ⑤ Interpolate | `interpolate [folder] [N..]` (RIFE ×2 → 48 fps, local) | `interp/videos/` |
-| ⑥ Edit | `edit [folder] [animate\|stills] [N..] [make_tiktok args]` | `<folder>/edits/` |
+| ⑥ Edit | `edit [folder] [animate\|stills] [N..] [make_edit args]` | `<folder>/edits/` |
 | ⑦ Civitai | web UI Civitai tab: best still (with Civitai metadata) + clip per picked stage | `data/civitai/<project>_<time>/` |
 
 No N = every stage missing that output; with N = redo those (the old file moves to `_debug/`). The web UI board has one phase
@@ -94,7 +94,7 @@ for a web-UI ref `@<project>#<id>`).
   is in flight. `duration` is free-form (1–8 s, snapped to the 24 fps frame grid).
 - **No music** (`music.none` in project.json): `edit` becomes a scenario cut (`--no-music`): every stage in full, joined by an
   xfade `transition`, over the clips' own audio.
-- `edit` (`video/make_tiktok.py`) is **frame-exact** (cumulative integer frame counts). After changing it, verify the total frame
+- `edit` (`video/make_edit.py`) is **frame-exact** (cumulative integer frame counts). After changing it, verify the total frame
   count and PSNR-compare against a previous edit.
 
 ## Comfy Cloud API quirks

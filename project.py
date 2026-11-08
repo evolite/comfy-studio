@@ -45,7 +45,7 @@ Top-level `video_megapixels` (i2v clip size; template default 0.4 = 512x768 at 2
                                                      stage_N.mp4 on the local ComfyUI (free) -> interp/videos/stage_N.mp4 (sources
                                                      untouched); no N: every clip without an interp/ result; needs the
                                                      ComfyUI-Frame-Interpolation node; cut it with `edit interp animate`
-  python3 project.py <name> edit [folder] [animate|stills] [N...] [make_tiktok.py args]   beat-synced edit (free)
+  python3 project.py <name> edit [folder] [animate|stills] [N...] [make_edit.py args]   beat-synced edit (free)
                                                      folder as for animate; `animate` = cut that folder's clips (errors if none),
                                                      `stills` = its stage_N.png; N... = only those stages, in that order;
                                                      mix: `animate ... --as-still 2 5 [--stills-from <dir>]` shows those stages' stills
@@ -527,7 +527,7 @@ def cmd_edit(a):
     folder, stages = folder_and_stages(d, [w for w in words if w != mode])
     if mode == "animate" and not any((folder / "videos").glob("stage_*.mp4")):
         sys.exit(f"no clips in {folder.name}/videos -- run: project.py {a.name} animate {'' if folder == d else folder.name}")
-    cmd = [sys.executable, str(ROOT / "video" / "make_tiktok.py"), str(folder)]
+    cmd = [sys.executable, str(ROOT / "video" / "make_edit.py"), str(folder)]
     if mode == "stills":
         cmd.append("--stills")
     if stages:

@@ -119,7 +119,7 @@ export function StartSlider({ file, audio, value, onCommit, label = "start time"
   );
 }
 
-// xfade transitions for a no-music edit (make_tiktok.TRANSITIONS); "cut" = hard cuts
+// xfade transitions for a no-music edit (make_edit.TRANSITIONS); "cut" = hard cuts
 export const TRANSITIONS = ["fade", "fadeblack", "fadewhite", "dissolve", "fadeslow", "smoothleft", "smoothup", "slideleft", "wipeleft",
   "circleopen", "radial", "zoomin", "hblur", "pixelize", "cut"];
 const SCENARIO_NUMS: [keyof Music, string, number][] = [["transition_seconds", "transition (s)", 0.6], ["still_seconds", "still holds (s)", 3],

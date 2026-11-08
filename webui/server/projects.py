@@ -18,7 +18,7 @@ sys.path.insert(0, str(ROOT / "pipeline"))
 sys.path.insert(0, str(ROOT / "video"))
 import animate_pipeline  # noqa: E402
 import interpolate  # noqa: E402
-import make_tiktok  # noqa: E402
+import make_edit  # noqa: E402
 import graph_settings  # noqa: E402
 import steps  # noqa: E402
 import takes  # noqa: E402
@@ -544,10 +544,10 @@ def beat_file(rel):
 
 def fitting_durations(beats, beats_per_cut=2, engine=animate_pipeline.DEFAULT_ENGINE):
     """Clip lengths on the i2v engine's frame grid (MiniMax 17k+5, LTX 8k+1; up to 8s) and how well each fills whole cuts of this music.
-    A clip gets round(length / cut) cuts, capped at make_tiktok.MAX_SUBCUTS_PER_STAGE (what the default edit does);
+    A clip gets round(length / cut) cuts, capped at make_edit.MAX_SUBCUTS_PER_STAGE (what the default edit does);
     `coverage` = cuts' total / clip length (100% = no unused tail, no freeze). `request` is the value to send as the
     duration: floored to 0.01s so it snaps to exactly this grid point."""
-    bt, start = make_tiktok.load_beats(beat_file(beats))
+    bt, start = make_edit.load_beats(beat_file(beats))
     beat = (bt[-1] - bt[0]) / (len(bt) - 1)
     cut = beats_per_cut * beat
     opts = []
@@ -558,7 +558,7 @@ def fitting_durations(beats, beats_per_cut=2, engine=animate_pipeline.DEFAULT_EN
         if secs < 1.0:  # below the shortest duration a stage takes
             continue
         raw = secs / cut
-        n = max(1, min(make_tiktok.MAX_SUBCUTS_PER_STAGE, round(raw)))
+        n = max(1, min(make_edit.MAX_SUBCUTS_PER_STAGE, round(raw)))
         cov = n * cut / secs
         opts.append({"request": math.floor(secs * 100) / 100, "frames": frames, "seconds": round(secs, 2), "cuts": n,
                      "coverage": round(cov, 2), "recommended": n == round(raw) and 0.93 <= cov <= 1.06})
@@ -585,8 +585,8 @@ def _validated_music(music) -> dict:
         beat_file(music["beat_times_file"])
     if music.get("audio") and not Path(music["audio"]).is_file():
         raise ApiError("audio file not found")
-    if music.get("transition") and music["transition"] not in make_tiktok.TRANSITIONS:
-        raise ApiError(f"transition must be one of {', '.join(make_tiktok.TRANSITIONS)}")
+    if music.get("transition") and music["transition"] not in make_edit.TRANSITIONS:
+        raise ApiError(f"transition must be one of {', '.join(make_edit.TRANSITIONS)}")
     for k in SCENARIO_NUMS:
         if music.get(k) not in (None, "") and not 0 <= float(music[k]) <= 30:
             raise ApiError(f"{k} must be 0-30 s")

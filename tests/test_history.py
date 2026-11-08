@@ -48,8 +48,8 @@ def test_cleanup_keeps_current_results_and_takes_only(tmp_path):
         (sd / f"{tid}.png").write_bytes(b"t")
         (sd / f"{tid}.json").write_text("{}")
     (sd / "current").write_text(json.dumps({"id": "20260101-000001-000"}))
-    (d / "interp" / "_debug" / "tiktok_build_x").mkdir(parents=True)
-    (d / "interp" / "_debug" / "tiktok_build_x" / "cut.mp4").write_bytes(b"c")
+    (d / "interp" / "_debug" / "edit_build_x").mkdir(parents=True)
+    (d / "interp" / "_debug" / "edit_build_x" / "cut.mp4").write_bytes(b"c")
     (d / "interp" / "edits").mkdir()
     (d / "interp" / "edits" / "e.mp4").write_bytes(b"e")
     assert history.cleanup(d, dry_run=True) == {"files": 4, "bytes": 3 + 1 + 2 + 1}

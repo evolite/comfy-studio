@@ -33,7 +33,7 @@ import steps  # noqa: E402
 
 # how long the last edit of each kind took (edits of a kind are all about the same size) -> estimate + progress bar for the next one
 EDIT_TIMING = config.LOGS_DIR / "edit_timing.json"
-FRAMES_RE = re.compile(r"total (\d+) frames")  # make_tiktok's plan line; scales the estimate when the edit is longer/shorter than the last
+FRAMES_RE = re.compile(r"total (\d+) frames")  # make_edit's plan line; scales the estimate when the edit is longer/shorter than the last
 EDIT_KINDS = ("beat", "nomusic")
 
 
@@ -120,7 +120,7 @@ class Job:
         self.proc = None
         self.eta, self.took, self.cursor = {}, {}, None  # per-stage expected / processed seconds; when the current stage began
         self.last_done = None  # when the latest stage finished: per_stage = (last_done - started) / finished stages
-        self.frames = None  # edit jobs: frame count of the plan, once make_tiktok has printed it
+        self.frames = None  # edit jobs: frame count of the plan, once make_edit has printed it
         self.mem_freed = None  # why the local batch had to free memory first (memory check), else None
         self.cloud_ids = []  # prompt ids this job submitted (Comfy Cloud, or the pod), so cancel can pull them off the remote queue
         self.cond = threading.Condition()
@@ -380,7 +380,7 @@ class Manager:
         name = Path(name).name
         if not name.endswith(".mp4"):
             name += ".mp4"
-        return ["--out-name", name]  # make_tiktok writes it to <folder>/edits/
+        return ["--out-name", name]  # make_edit writes it to <folder>/edits/
 
     @staticmethod
     def _trim_flags(req):

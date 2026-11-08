@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Instax-style polaroid cards from stage stills, and the collage outro of an edit (video/make_tiktok.py).
+Instax-style polaroid cards from stage stills, and the collage outro of an edit (video/make_edit.py).
 
 A card (make_card) is the still cropped to the Instax Mini picture window (46 x 62 mm on a 54 x 86 mm card), given a faded
 film grade (lifted blacks, cool shadows, warm highlights, soft, grain, vignette), framed in off-white paper with the wide

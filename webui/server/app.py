@@ -826,7 +826,7 @@ def audio_track(beat_times_file: str = "", audio: str = ""):
 def audio_clip(beat_times_file: str = "", audio: str = ""):
     """PREVIEW_SECONDS of the track an edit with these settings would use, starting at the beat file's start time."""
     f = _track(beat_times_file, audio)
-    start = P.make_tiktok.load_beats(P.beat_file(beat_times_file))[1] or 0
+    start = P.make_edit.load_beats(P.beat_file(beat_times_file))[1] or 0
     r = subprocess.run(["ffmpeg", "-v", "error", "-ss", str(start), "-t", str(PREVIEW_SECONDS), "-i", str(f), "-vn",
                         "-c:a", "libmp3lame", "-q:a", "4", "-f", "mp3", "-"], capture_output=True)
     if r.returncode or not r.stdout:

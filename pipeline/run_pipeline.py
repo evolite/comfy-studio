@@ -3,7 +3,7 @@
 Generic pipeline runner: give it a stage set (JSON file), it submits everything as one batch, waits, and saves
 the 9 (or however many) final images flat into one pipeline folder.
 
-TikTok-style edits are a separate step now -- see video/make_tiktok.py (run it against
+Edits are a separate step now -- see video/make_edit.py (run it against
 the pipeline folder once the images/videos you want are ready).
 
 STAGES FILE (JSON): a list of stage objects, each:

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-import make_tiktok as mt
+import make_edit as mt
 
 
 def test_frame_counts_come_from_cumulative_boundaries():

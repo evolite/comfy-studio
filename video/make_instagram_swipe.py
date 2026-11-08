@@ -19,7 +19,7 @@ Usage:
     python3 video/make_instagram_swipe.py data/pipelines/<run> [--stills] [--direction left|right] [--transition diagtl]
 
 Stages play in stage-number order by default; pass --order to play a different sequence
-(repeats/drops allowed) without renaming files -- see make_tiktok.py's stage_sources(),
+(repeats/drops allowed) without renaming files -- see make_edit.py's stage_sources(),
 reused here, for why renaming breaks motion_prompts.json/stage_durations.json.
 """
 import argparse
@@ -29,7 +29,7 @@ from pathlib import Path
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from make_tiktok import stage_sources, clip_duration, WIDTH, HEIGHT, FPS  # noqa: E402
+from make_edit import stage_sources, clip_duration, WIDTH, HEIGHT, FPS  # noqa: E402
 
 DIRECTIONS = {"left": "slideleft", "right": "slideright"}
 

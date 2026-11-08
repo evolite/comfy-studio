@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Beat-synced TikTok edit from a pipeline's i2v clips (pipeline_dir/videos/stage_N.mp4,
+Beat-synced edit from a pipeline's i2v clips (pipeline_dir/videos/stage_N.mp4,
 built via video/animate_pipeline.py -- see AGENTS.md), or its stage_N.png stills when
 it has no clips (--stills forces stills).
 
@@ -22,7 +22,7 @@ burst on every cut. The final cut holds --last-weight x.
 Defaults are the house track (config.DEFAULT_BEATS, e.g. data/audio/default.json + default.mp3; its start time is in its beat
 file), so the normal call is just:
 
-    python3 video/make_tiktok.py data/pipelines/<run> [--zoom] [--stills]
+    python3 video/make_edit.py data/pipelines/<run> [--zoom] [--stills]
 
 Another track: --beat-times-file audio/<Song>.json -- the file holds the beats and the
 start time (where in the song the video starts), and audio/<Song>.mp3 beside it is used as the audio.
@@ -78,7 +78,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))  # repo root: config.py
 import config  # noqa: E402
 import polaroid  # noqa: E402  # video/, beside this file
-FPS = 30  # the edit's frame rate; make_tiktok() raises it to HI_FPS when every clip is interpolated (edit_fps)
+FPS = 30  # the edit's frame rate; make_edit() raises it to HI_FPS when every clip is interpolated (edit_fps)
 HI_FPS = 48  # RIFE x2 of the 24 fps i2v clips (video/interpolate.py): render at their own rate, no frame dropping
 FADE_OUT = 0.5  # seconds the music fades out over at the end of the edit (--fade-out; 0 = hard stop)
 TRIM_START = 0.2  # seconds cut from the start of every video clip (i2v ramp-up); stills are untouched
@@ -131,7 +131,7 @@ class Cut:
 
 @dataclass
 class EditOptions:
-    """The knobs make_tiktok/make_scenario take besides their beat/layout inputs, bundled so the signatures stay short."""
+    """The knobs make_edit/make_scenario take besides their beat/layout inputs, bundled so the signatures stay short."""
     trims: dict | None = None     # stage id -> seconds cut from that clip's start (others: TRIM_START)
     trims_end: dict | None = None # stage id -> seconds cut from the clip's end (others: 0)
     clip_audio: bool = False      # layer the clips' own audio over the music
@@ -726,7 +726,7 @@ def _mux_and_sounds(cuts, clip_paths, build_dir, audio, audio_start, total_frame
         add_card_sounds(out_path, times, opts.card_sound_volume, seed=len(times))
 
 
-def make_tiktok(pipeline_dir, out_name=None, audio=None, beat_times_file=DEFAULT_BEAT_TIMES,
+def make_edit(pipeline_dir, out_name=None, audio=None, beat_times_file=DEFAULT_BEAT_TIMES,
                 start_time=None, lead_in_seconds=2.0, subcuts_per_image=2, beats_per_cut=2,
                 last_weight=2.0, zoom=None, stills=False, order=None, opts: EditOptions = None) -> Path:
     """Beat-synced edit over the music (see the module docstring)."""
@@ -772,7 +772,7 @@ def make_tiktok(pipeline_dir, out_name=None, audio=None, beat_times_file=DEFAULT
           f"punch-in {f'{zoom}x' if zoom else 'off'}, music from {audio_start:.2f}s, first cut at {punch_start:.2f}s, "
           f"total {total_frames} frames / {total_frames / FPS:.3f}s at {FPS} fps", flush=True)
 
-    build_dir = pipeline_dir / "_debug" / "tiktok_build_beatsync_dynamic_video_flare"
+    build_dir = pipeline_dir / "_debug" / "edit_build_beatsync"
     shutil.rmtree(build_dir, ignore_errors=True)  # no stale cuts from a previous layout
     build_dir.mkdir(parents=True)
     clip_paths = _render_cuts(cuts, build_dir, zoom)
@@ -895,7 +895,7 @@ def make_scenario(pipeline_dir, out_name=None, stills=False, order=None, transit
     print(f"{pipeline_dir.name}: {len(clips)} stages, no music, transition {transition} {t_frames / FPS:.2f}s, "
           f"fade in {fade_in}s / out {opts.fade_out}s, total {total_frames} frames / {total_frames / FPS:.3f}s at {FPS} fps", flush=True)
 
-    build_dir = pipeline_dir / "_debug" / "tiktok_build_scenario"
+    build_dir = pipeline_dir / "_debug" / "edit_build_scenario"
     shutil.rmtree(build_dir, ignore_errors=True)
     build_dir.mkdir(parents=True)
     def render(i):
@@ -975,7 +975,7 @@ def main():
         make_scenario(a.pipeline_dir, a.out_name, a.stills, a.order, a.transition, a.transition_seconds, a.still_seconds,
                       a.fade_in, opts)
         return
-    make_tiktok(a.pipeline_dir, a.out_name, a.audio, a.beat_times_file, a.start_time, a.lead_in_seconds,
+    make_edit(a.pipeline_dir, a.out_name, a.audio, a.beat_times_file, a.start_time, a.lead_in_seconds,
                 a.subcuts_per_image, a.beats_per_cut, a.last_weight, a.zoom, a.stills, a.order, opts)
 
 
