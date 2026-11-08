@@ -261,8 +261,9 @@ def test_app_settings_pushover_keys(monkeypatch):
     monkeypatch.setattr(config, "PUSHOVER_TOKEN", "")
     assert c.get("/api/notify").json()["configured"] is False
     r = c.put("/api/app-settings", json={"pushover_user": "u123", "pushover_token": "secret"}).json()
-    assert r == {"pushover_user": "u123", "pushover_token_set": True, "pushover_from": "settings",
-                 "animate_target": "cloud", "animate_batch_size": 4}  # the token is never sent back
+    assert {k: r[k] for k in ("pushover_user", "pushover_token_set", "pushover_from", "animate_target", "animate_batch_size")} == {
+        "pushover_user": "u123", "pushover_token_set": True, "pushover_from": "settings", "animate_target": "cloud", "animate_batch_size": 4}
+    assert "pushover_token" not in r and {"runpod_h3_unet", "runpod_h3_choices"} <= set(r)  # the token is never sent back
     assert config.pushover() == ("u123", "secret") and c.get("/api/notify").json()["configured"] is True
     c.put("/api/app-settings", json={"pushover_user": "u456"})  # an absent key keeps its saved value
     assert config.pushover() == ("u456", "secret")
