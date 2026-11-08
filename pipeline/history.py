@@ -118,8 +118,7 @@ def cleanup(d: Path, dry_run: bool = False) -> dict:
     """Delete every earlier version (history and the older archives), every preview take but the current one, and the edits' build
     folders. Current results, approvals and finished edits stay. dry_run: only count. -> {"files", "bytes"}."""
     d = Path(d)
-    builds = ("edit_build_*", "tiktok_build_*")  # tiktok_build_ = the folders' old name
-    doomed = [d / "_debug" / x for x in (DIR, *LEGACY)] + [b for pat in builds for b in (*d.glob(f"*/_debug/{pat}"), *d.glob(f"_debug/{pat}"))]
+    doomed = [d / "_debug" / x for x in (DIR, *LEGACY)] + list(d.glob("*/_debug/edit_build_*")) + list(d.glob("_debug/edit_build_*"))
     for sd in (d / takes.FOLDER / "takes").glob("stage_*"):
         cur = takes.current_id(d, sd.name[6:])
         if cur:  # no current take recorded: leave that stage's takes alone
