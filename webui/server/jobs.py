@@ -60,7 +60,7 @@ def _timings():
         data = json.loads(EDIT_TIMING.read_text())
     except (OSError, ValueError):
         return {}
-    return {"beat": data} if "seconds" in data else data  # older file: one beat-synced timing
+    return data
 
 
 def edit_timing(kind="beat"):

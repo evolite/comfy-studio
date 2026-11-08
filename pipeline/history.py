@@ -3,7 +3,7 @@ UI can bring one back. Preview renders are not here -- they are takes (takes.py)
 
     _debug/history/<slot>/stage_N/<YYYYMMDD-HHMMSS-mmm>.<png|mp4>     slot = the folder ("root" for the project root), "-videos" for clips
 
-Files archived before this existed are listed too: _debug/prev_stills (root stills), prev_IL, prev_videos (<folder>_stage_N_<hex>.mp4)
+Files archived elsewhere are listed too: _debug/prev_videos (<folder>_stage_N_<hex>.mp4, from before this existed)
 and removed/ (<folder>_<unix time>_stage_N.<ext>).
 """
 import os
@@ -48,13 +48,6 @@ def archive(d: Path, path: Path):
     return out
 
 
-def _legacy_stills(dbg: Path, sid):
-    for p in (dbg / "prev_stills").glob(f"stage_{sid}_*.png"):
-        yield p, "", "still"
-    for p in (dbg / "prev_IL").glob(f"stage_{sid}_*.png"):
-        yield p, "IL", "still"
-
-
 def _prev_videos(dbg: Path, sid, project: str):
     """Archived clips from the pre-history folders: (file, folder label, kind)."""
     for p in (dbg / "prev_videos").glob(f"*stage_{sid}_*.mp4"):
@@ -80,7 +73,6 @@ def _legacy_clips(dbg: Path, sid, project: str):
 
 def _legacy(dbg: Path, sid, project: str):
     """(file under _debug, folder, kind) of the archives from before this module."""
-    yield from _legacy_stills(dbg, sid)
     yield from _legacy_clips(dbg, sid, project)
 
 
@@ -111,7 +103,7 @@ def restore(d: Path, sid, file: str) -> str:
     return str(dst.relative_to(d))
 
 
-LEGACY = ("prev_stills", "prev_IL", "prev_videos", "prev_previews", "removed")
+LEGACY = ("prev_videos", "removed")
 
 
 def cleanup(d: Path, dry_run: bool = False) -> dict:

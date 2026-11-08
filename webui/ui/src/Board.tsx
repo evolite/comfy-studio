@@ -560,9 +560,9 @@ export default function Board({ name }: { readonly name: string }) {
     const changed = new Map<number, string[]>();
     for (const id of ids) {
       const s = stageOf(id);
-      const have = legacyDone(s, folders);
+      const have = s.done ?? [];
       const next = edit(have);
-      if (Array.isArray(s.done) && next.length === have.length && next.every((k, i) => k === have[i])) continue;  // unchanged: no PATCH
+      if (s.done && next.length === have.length && next.every((k, i) => k === have[i])) continue;  // unchanged: no PATCH
       changed.set(id, next);
     }
     if (!changed.size) return Promise.resolve();
@@ -760,12 +760,6 @@ export default function Board({ name }: { readonly name: string }) {
       {light && <Lightbox project={name} items={light.items} index={light.i} onIndex={lightIndex} onClose={() => setLight(null)} />}
     </div>
   );
-}
-
-/** A stage's `done` list; the legacy `true` means done everywhere. */
-function legacyDone(s: Stage, folders: string[]): string[] {
-  if (Array.isArray(s.done)) return s.done;
-  return s.done ? folders : [];
 }
 
 /** The lightbox entry of one stage's still/clip in a folder (none if it has no such file). */

@@ -24,13 +24,13 @@ def test_archive_list_and_restore_swap_versions(tmp_path):
 
 def test_older_archives_are_listed_by_folder(tmp_path):
     d = tmp_path / "proj"
-    for sub, name in [("prev_stills", "stage_3_ab12cd.png"), ("prev_IL", "stage_3_ab12cd.png"), ("prev_videos", "proj_stage_3_ab12cd.mp4"),
-                      ("prev_videos", "interp_stage_3_ab12cd.mp4"), ("removed", "finish_1700000000_stage_3.png"),
-                      ("removed", "take_stage_3_20260101-000000-000.png"), ("prev_stills", "stage_33_ab12cd.png")]:
+    for sub, name in [("prev_videos", "proj_stage_3_ab12cd.mp4"), ("prev_videos", "interp_stage_3_ab12cd.mp4"),
+                      ("removed", "finish_1700000000_stage_3.png"), ("removed", "take_stage_3_20260101-000000-000.png"),
+                      ("prev_videos", "proj_stage_33_ab12cd.mp4")]:
         (d / "_debug" / sub).mkdir(parents=True, exist_ok=True)
         (d / "_debug" / sub / name).write_bytes(b"x")
     got = sorted((r["folder"], r["kind"]) for r in history.listing(d, 3))
-    assert got == [("", "clip"), ("", "still"), ("IL", "still"), ("finish", "still"), ("interp", "clip")]
+    assert got == [("", "clip"), ("finish", "still"), ("interp", "clip")]
     history.restore(d, 3, "prev_videos/interp_stage_3_ab12cd.mp4")
     assert (d / "interp" / "videos" / "stage_3.mp4").is_file()
 

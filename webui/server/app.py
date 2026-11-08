@@ -553,10 +553,10 @@ def stage_import(name: str, sid: int, body: dict = Body(...)):
 
 @app.delete("/api/projects/{name}/files/{path:path}")
 def file_delete(name: str, path: str):
-    """Delete a finished edit mp4 (<folder>/edits/*.mp4, or a legacy one in the project root) -- the only thing the UI deletes."""
+    """Delete a finished edit mp4 (<folder>/edits/*.mp4) -- the only thing the UI deletes."""
     d = P.project_dir(name).resolve()
     f = (d / path).resolve()
-    ok = f.parent == d or (f.parent.name == "edits" and f.parent.parent.parent == d or f.parent == d / "edits")
+    ok = f.parent.name == "edits" and f.parent.parent.parent == d or f.parent == d / "edits"
     if not ok or f.suffix != ".mp4" or not f.is_file():
         raise P.ApiError("only edit mp4s can be deleted")
     f.unlink()

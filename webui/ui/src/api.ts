@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 export type Stage = {
   id: number; krea_scene?: string; il_scene?: string; il_background?: string; motion?: string; duration?: number;
-  done?: boolean | string[];  // folders this stage is completed in (legacy `true` = every folder)
+  done?: string[];  // folders this stage is completed in
   loras?: Record<string, number>; video_loras?: Record<string, number>; video_engine?: string; seed?: number; video_seed?: number; audio?: boolean;
   voice?: string;  // a voice-library name filling the motion's {voice...} slots (else the project's `voice`)
   voices?: Record<string, string>;  // other speakers' voices, {"S2": name}: fill their {voice...:S2} slots (else the project's `voices`, else `voice`)
@@ -13,7 +13,7 @@ export type Take = { id: string; mtime: number; current: boolean; source: "run" 
 export type FolderState = { stills: Record<string, number>; clips: Record<string, number>; takes?: Record<string, Take[]>; stale?: number[]; stale_clips?: number[] };
 export type Project = {
   name: string; config: { engine: string; oneoff?: boolean; seed?: number; video_megapixels?: number; video_engine?: string; voice?: string; voices?: Record<string, string>; music?: { beat_times_file?: string; audio?: string }; settings: Record<string, unknown>; stages: Stage[] };
-  folders: Record<string, FolderState>; edits: { name: string; mtime: number; size: number; folder: string | null }[];
+  folders: Record<string, FolderState>; edits: { name: string; mtime: number; size: number; folder: string }[];
 };
 export type ProjectRow = { name: string; engine: string; oneoff?: boolean; finished?: boolean; thumb?: number | null; stages: number; stills: number; clips: number; edits: number; mtime: number };
 export type Job = {
@@ -90,12 +90,12 @@ export function useHash(): string {
   return h;
 }
 
-/** Is a stage marked completed in folder `f`? (legacy `done: true` = every folder) */
-export const doneIn = (s: Stage, f: string) => (Array.isArray(s.done) ? s.done.includes(f) : !!s.done);
+/** Is a stage marked completed in folder `f`? */
+export const doneIn = (s: Stage, f: string) => (s.done ?? []).includes(f);
 
 /** `done` entries are folder names for stills; a clip approval is `<folder>/videos`. */
 export const clipKey = (f: string) => `${f || "root"}/videos`;
-export const anyClipDone = (s: Stage) => (Array.isArray(s.done) ? s.done.some((k) => k.endsWith("/videos")) : !!s.done);
+export const anyClipDone = (s: Stage) => (s.done ?? []).some((k) => k.endsWith("/videos"));
 
 export type RunpodBalance = { balance: number; spend_per_hr: number };
 export type Credits = { effective_balance_micros: number; prepaid_balance_micros: number; cloud_credit_balance_micros: number; amount_micros: number; currency: string };

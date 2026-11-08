@@ -91,21 +91,18 @@ def test_one_failed_take_does_not_fail_the_stage(fake, proj, monkeypatch, capsys
 
 def test_external_and_legacy_files_become_takes(proj):
     d = proj.d
-    (d / "_debug" / "prev_previews").mkdir(parents=True)
-    (d / "_debug" / "prev_previews" / "stage_1_abc123.png").write_bytes(PNG)
     (d / "preview").mkdir(exist_ok=True)
     (d / "preview" / "stage_1.png").write_bytes(PNG)
     takes.sync(d, 1)
     rows = takes.listing(d, 1)
-    assert len(rows) == 2 and [r["source"] for r in rows] == ["legacy", "legacy"] and rows[0]["current"]
-    assert not list((d / "_debug" / "prev_previews").glob("*.png"))  # moved in, not copied
+    assert len(rows) == 1 and rows[0]["source"] == "legacy" and rows[0]["current"]
     time.sleep(0.01)
     (d / "preview" / "stage_1.png").write_bytes(PNG + b"x")  # replaced by hand: the canonical file wins
     takes.sync(d, 1)
     rows = takes.listing(d, 1)
-    assert len(rows) == 3 and rows[0]["current"] and rows[0]["source"] == "external"
+    assert len(rows) == 2 and rows[0]["current"] and rows[0]["source"] == "external"
     takes.sync(d, 1)
-    assert len(takes.listing(d, 1)) == 3  # stable once in sync
+    assert len(takes.listing(d, 1)) == 2  # stable once in sync
 
 
 def test_diff_and_delta():

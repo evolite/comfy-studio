@@ -73,9 +73,8 @@ def _write_json(path, data):
 
 
 def preview_approved(stage):
-    """Is the stage's preview ✓'d in the UI? (legacy `done: true` = approved everywhere)"""
-    done = stage.get("done")
-    return "preview" in done if isinstance(done, list) else bool(done)
+    """Is the stage's preview ✓'d in the UI?"""
+    return "preview" in (stage.get("done") or [])
 
 
 def load(name):
@@ -103,14 +102,12 @@ def folders(d):
 
 def edits(d):
     """Edit mp4s: <folder>/edits/*.mp4 (the project root's own are <project>/edits/). `name` is the path relative to the
-    project; `folder` the source folder. Pre-`edits/` files left in the project root are listed with folder None."""
+    project; `folder` the source folder."""
     out = []
     spots = [("", d / "edits")] + [(p.name, p / "edits") for p in d.iterdir() if p.is_dir() and not p.name.startswith("_") and p.name not in ("videos", "edits")]
     for folder, e in spots:
         for p in e.glob(MP4_GLOB) if e.is_dir() else []:
             out.append({"name": str(p.relative_to(d)), "mtime": int(p.stat().st_mtime), "size": p.stat().st_size, "folder": folder})
-    for p in d.glob(MP4_GLOB):
-        out.append({"name": p.name, "mtime": int(p.stat().st_mtime), "size": p.stat().st_size, "folder": None})
     return sorted(out, key=lambda e: -e["mtime"])
 
 
@@ -166,11 +163,10 @@ def get(name):
 # --- preview takes (pipeline/takes.py) -----------------------------------------------------------------------------
 @locked
 def take_lists(d, ids):
-    """{sid: [{id, mtime, current, source, delta}]} for stages that have takes (sync takes in legacy/external files first)."""
+    """{sid: [{id, mtime, current, source, delta}]} for stages that have takes (sync takes in external files first)."""
     out = {}
     for sid in ids:
-        if (d / "preview" / f"stage_{sid}.png").exists() or takes.stage_dir(d, sid).is_dir() \
-                or (d / "_debug" / "prev_previews").is_dir() and any((d / "_debug" / "prev_previews").glob(f"stage_{sid}_*.png")):
+        if (d / "preview" / f"stage_{sid}.png").exists() or takes.stage_dir(d, sid).is_dir():
             takes.sync(d, sid)
             rows = takes.listing(d, sid)
             if rows:

@@ -8,8 +8,8 @@
 preview/stage_N.png stays the one file every later step reads; it is a copy of the current take. Every new render
 becomes the current take as it lands (the previous current stays in the takes folder for comparison) and ✓s the
 preview; if that displaced a different take, everything made from the old one loses its ✓. If the file no longer
-matches `current` (restored, imported) it is taken in as an `external` take. Old archived previews
-(_debug/prev_previews) and an untracked preview/stage_N.png are taken in once as `legacy` takes (no record).
+matches `current` (restored, imported) it is taken in as an `external` take; an untracked preview/stage_N.png (no takes
+yet) as a `legacy` take (no record).
 """
 import json
 import re
@@ -100,16 +100,10 @@ def set_current(d: Path, n, tid: str) -> bool:
 
 
 def sync(d: Path, n) -> None:
-    """Take in what the takes folder doesn't know yet: legacy archives once, and a canonical file that isn't the current take."""
+    """Take in a canonical file that isn't the current take."""
     sd = stage_dir(d, n)
+    sd.mkdir(parents=True, exist_ok=True)
     canon = canonical(d, n)
-    if not (sd / ".migrated").exists():
-        sd.mkdir(parents=True, exist_ok=True)
-        prev = d / "_debug" / "prev_previews"
-        if prev.is_dir():
-            for p in sorted(prev.glob(f"stage_{n}_*.png"), key=lambda p: p.stat().st_mtime):
-                add(d, n, p, rec=None, move=True, t=p.stat().st_mtime)
-        (sd / ".migrated").write_text("")
     if canon.is_file():
         _sync_canonical(d, n, sd, canon)
     _backfill(d, n, sd)
