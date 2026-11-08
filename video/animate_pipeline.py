@@ -167,15 +167,15 @@ def build_graph(template: dict, image_name: str, prompt: str, duration_value: fl
     return graph
 
 
-STOCK_H3_UNET = "minimax_h3_fl2va_pruned_int8_convrot.safetensors"
+STOCK_H3_UNET = config.STOCK_H3_UNET
 
 
-def pod_unet(graph: dict) -> None:
-    """On the pod, H3 graphs load config.RUNPOD_H3_UNET (a distilled turbo finetune) in place of the stock UNet; Comfy Cloud keeps the stock one.
+def pod_unet(graph: dict, unet: str) -> None:
+    """On the pod, H3 graphs load `unet` (config.runpod_h3_unet(): a distilled turbo finetune) in place of the stock UNet; Comfy Cloud keeps the stock one.
     It is distilled already: the turbo switch's LoRA branch is skipped (still 8 steps) and the sampler is euler (author's pick)."""
     for nid, node in graph.items():
         if node.get("class_type") == "UNETLoader" and node["inputs"].get("unet_name") == STOCK_H3_UNET:
-            node["inputs"]["unet_name"] = config.RUNPOD_H3_UNET
+            node["inputs"]["unet_name"] = unet
             for other in graph.values():  # the ComfySwitchNode picking UNet vs UNet + turbo LoRA
                 if other.get("class_type") == "ComfySwitchNode" and other["inputs"].get("on_false") == [nid, 0]:
                     other["inputs"]["on_true"] = [nid, 0]
@@ -339,8 +339,8 @@ def _render_record(args, png: Path, prompts, durations, stage_loras, stage_seeds
     image = local.upload(server, png, f"{secrets.token_hex(4)}_{png.name}") if server else api.upload_image(png)  # pod: one inputs/ for every project
     graph = build_graph(template, image, prompts[key], duration_value, loras, seed, args.megapixels,
                         rife=bool(args.rife_dir), engine=engine, audio=with_audio)
-    if server and engine == "minimax" and config.RUNPOD_H3_UNET:
-        pod_unet(graph)
+    if server and engine == "minimax" and (unet := config.runpod_h3_unet()):
+        pod_unet(graph, unet)
     return {"stage": stage_num, "graph": graph, "engine": engine, "loras": loras, "seed": seed, "audio": with_audio,
             "attempts": 0}
 

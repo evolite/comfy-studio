@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
 import { Icon } from "./icons";
 
-type AppSettings = { animate_target: "cloud" | "runpod"; animate_batch_size: number; pushover_user: string; pushover_token_set: boolean; pushover_from: "settings" | ".env" | null };
+type AppSettings = { animate_target: "cloud" | "runpod"; animate_batch_size: number; runpod_h3_unet: string; runpod_h3_choices: string[]; pushover_user: string; pushover_token_set: boolean; pushover_from: "settings" | ".env" | null };
 type Pod = { up: boolean; id?: string; state?: string; ready?: boolean; uptime?: number | null; cost_per_hr?: number | null; gpu?: string; error?: string };
 
 const hm = (sec: number) => `${Math.floor(sec / 3600)}h ${String(Math.floor(sec / 60) % 60).padStart(2, "0")}m`;
@@ -26,7 +26,7 @@ function podLine(p: Pod | undefined) {
 }
 
 /** Where `animate` renders, and the RunPod pod's line: up/down, uptime, $/hr, "Stop pod now" (pipeline/runpod_pod.py). */
-function AnimateTarget({ target, batchSize, onSaved }: { readonly target: AppSettings["animate_target"]; readonly batchSize: number; readonly onSaved: () => void }) {
+function AnimateTarget({ target, batchSize, h3, h3Choices, onSaved }: { readonly target: AppSettings["animate_target"]; readonly batchSize: number; readonly h3: string; readonly h3Choices: string[]; readonly onSaved: () => void }) {
   const pod = useQuery({ queryKey: ["runpod"], queryFn: () => api<Pod>("/runpod"), refetchInterval: 15000 });
   const [msg, setMsg] = useState("");
   const set = (t: AppSettings["animate_target"]) => api("/app-settings", "PUT", { animate_target: t }).then(onSaved, (e: Error) => setMsg(`✗ ${e.message}`));
@@ -51,8 +51,27 @@ function AnimateTarget({ target, batchSize, onSaved }: { readonly target: AppSet
         {pod.data?.id && <button className="btn danger" onClick={stop}>Stop pod now</button>}
         {msg && <span className="dim">{msg}</span>}
       </div>
+      <PodH3 unet={h3} choices={h3Choices} onSaved={onSaved} />
       <BatchSize size={batchSize} onSaved={onSaved} />
     </section>
+  );
+}
+
+/** The H3 UNet the RunPod pod loads: stock MiniMax H3 (+ its turbo LoRA) or a finetune on the volume (Comfy Cloud is always stock). */
+function PodH3({ unet, choices, onSaved }: { readonly unet: string; readonly choices: string[]; readonly onSaved: () => void }) {
+  const [msg, setMsg] = useState("");
+  const set = (v: string) => api("/app-settings", "PUT", { runpod_h3_unet: v }).then(() => { setMsg("saved ✓"); onSaved(); }, (e: Error) => setMsg(`✗ ${e.message}`));
+  return (
+    <div className="row podline">
+      <label title="The MiniMax H3 model RunPod clips load. A finetune is distilled: the pod skips the stock turbo LoRA and samples with euler. Comfy Cloud always uses the stock model.">
+        <span>Pod H3 model</span>
+        <select value={unet} onChange={(e) => set(e.target.value)}>
+          <option value="">stock MiniMax H3</option>
+          {choices.map((c) => <option key={c} value={c}>{c.replace(/\.safetensors$/, "")}</option>)}
+        </select>
+      </label>
+      {msg && <span className="dim">{msg}</span>}
+    </div>
   );
 }
 
@@ -132,7 +151,7 @@ export default function SettingsButton() {
         <div className="menu settingspanel">
           {!s ? <div className="dim pad">loading…</div> : (
             <>
-              <AnimateTarget target={s.animate_target} batchSize={s.animate_batch_size} onSaved={() => saved()} />
+              <AnimateTarget target={s.animate_target} batchSize={s.animate_batch_size} h3={s.runpod_h3_unet} h3Choices={s.runpod_h3_choices} onSaved={() => saved()} />
               <Pushover s={s} onSaved={saved} />
             </>
           )}

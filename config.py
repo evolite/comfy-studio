@@ -54,8 +54,9 @@ RUNPOD_VOLUME_ID = os.environ.get("RUNPOD_VOLUME_ID", "")      # the network vol
 RUNPOD_DATACENTER = os.environ.get("RUNPOD_DATACENTER", "")  # where that volume lives; the pod must be there too
 # an H3 UNet the pod graphs load instead of the stock one (Comfy Cloud keeps the stock one): a distilled turbo finetune, so the
 # pod drops the stock turbo LoRA and runs 8 steps of euler (it must be in the RunPod manifest); "" = the stock minimax_h3_fl2va
-# UNet (+ turbo LoRA) on the pod too
+# UNet (+ turbo LoRA) on the pod too. The ⚙ page's "Pod H3 model" wins over this (config.runpod_h3_unet())
 RUNPOD_H3_UNET = os.environ.get("RUNPOD_H3_UNET", "")
+STOCK_H3_UNET = "minimax_h3_fl2va_pruned_int8_convrot.safetensors"  # the template's UNet
 # REST gpuTypeIds, tried in this order: the RTX PRO 6000s first (~2.2x a PRO 4500 per clip, ~1.6x its cost per clip), then the
 # other Blackwells with >= 32 GB, cheapest first (H3's UNet is 21 GB; NVFP4 needs Blackwell), without the $6-8/hr B200/B300.
 # Comma-separated to override.
@@ -112,6 +113,19 @@ def app_settings() -> dict:
 def animate_target() -> str:
     """Where `animate` renders: "cloud" (Comfy Cloud, the default) or "runpod" (our pod), the ⚙ page's switch."""
     return app_settings().get("animate_target") or "cloud"
+
+
+def runpod_h3_unet() -> str:
+    """The H3 UNet pod graphs load: the ⚙ page's pick when one is saved ("" = stock), else RUNPOD_H3_UNET."""
+    s = app_settings()
+    return s["runpod_h3_unet"] if "runpod_h3_unet" in s else RUNPOD_H3_UNET
+
+
+def runpod_h3_choices() -> list:
+    """The finetuned H3 UNets the RunPod volume holds (its manifest's diffusion_models with "h3" in the name, the stock one aside)."""
+    files = json.loads(RUNPOD_MANIFEST.read_text()).get("files", {})
+    names = [Path(p).name for p in files if p.startswith("models/diffusion_models/")]
+    return sorted(n for n in names if "h3" in n.lower() and n != STOCK_H3_UNET)
 
 
 def animate_batch_size() -> int:

@@ -655,6 +655,7 @@ def app_settings_info():
     """Never returns the token itself: only whether one is set, and where each value comes from."""
     s, (user, token) = config.app_settings(), config.pushover()
     return {"animate_target": config.animate_target(), "animate_batch_size": config.animate_batch_size(),
+            "runpod_h3_unet": config.runpod_h3_unet(), "runpod_h3_choices": config.runpod_h3_choices(),
             "pushover_user": user, "pushover_token_set": bool(token),
             "pushover_from": _pushover_from(s, user, token)}
 
@@ -684,6 +685,15 @@ def _apply_batch_size(s: dict, body: dict) -> None:
     s["animate_batch_size"] = n
 
 
+def _apply_h3_unet(s: dict, body: dict) -> None:
+    if "runpod_h3_unet" not in body:
+        return
+    v = str(body["runpod_h3_unet"] or "")
+    if v and v not in config.runpod_h3_choices():
+        raise P.ApiError(f"runpod_h3_unet must be \"\" (stock) or one of the RunPod volume's H3 UNets: {config.runpod_h3_choices()}")
+    s["runpod_h3_unet"] = v
+
+
 def _apply_pushover(s: dict, body: dict) -> None:
     for k in ("pushover_user", "pushover_token"):
         if k in body:
@@ -696,11 +706,12 @@ def _apply_pushover(s: dict, body: dict) -> None:
 
 @app.put("/api/app-settings")
 def app_settings_put(body: dict = Body(...)):
-    """{"pushover_user": str, "pushover_token": str, "animate_target": "cloud" | "runpod", "animate_batch_size": int}:
-    a key absent leaves the saved value; "" clears the pushover keys."""
+    """{"pushover_user": str, "pushover_token": str, "animate_target": "cloud" | "runpod", "animate_batch_size": int,
+    "runpod_h3_unet": "" (stock) | a runpod_h3_choices name}: a key absent leaves the saved value; "" clears the pushover keys."""
     s = config.app_settings()
     _apply_target(s, body)
     _apply_batch_size(s, body)
+    _apply_h3_unet(s, body)
     _apply_pushover(s, body)
     config.APP_SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
     config.APP_SETTINGS_FILE.write_text(json.dumps(s, indent=2))
