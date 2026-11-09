@@ -7,6 +7,14 @@
 # a ComfyUI that stops answering later counts as idle.
 # Deleting uses what RunPod puts in every pod: runpodctl with a pod-scoped key (v2 syntax, then v1), else the REST API with
 # that key; if deleting is refused it stops the pod (a stopped pod bills no GPU; the next ensure_up() terminates it).
+# First, every LoRA in $FETCH_FILES ("path sha256 url" lines: the manifest's LoRAs, from runpod_pod.create) that the volume
+# lacks is downloaded and sha256-checked, so a LoRA added to the manifest needs no seed.py run.
+while read -r path sum url; do
+    [ -n "$path" ] && [ ! -e "$path" ] || continue
+    echo "watchdog: fetching ${path##*/}"
+    curl -sfL --retry 3 -o "$path.part" "$url" && echo "$sum  $path.part" | sha256sum -c --quiet && mv "$path.part" "$path" \
+        || { echo "watchdog: could not fetch ${path##*/}"; rm -f "$path.part"; }
+done <<< "$FETCH_FILES"
 /start.sh &
 last="" since=$(date +%s) up=""
 idle=${IDLE_SECONDS:-120} boot=${BOOT_SECONDS:-600}

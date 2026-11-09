@@ -85,6 +85,16 @@ def answers(server: str) -> bool:
         return False
 
 
+def _fetch_files() -> str:
+    """"path sha256 url" per manifest LoRA with a url: the watchdog downloads the ones the volume lacks before ComfyUI starts."""
+    try:
+        m = json.loads(config.RUNPOD_MANIFEST.read_text())
+    except (OSError, ValueError):
+        return ""
+    return "\n".join(f"{m['comfyui_dir']}/{p} {f['sha256']} {f['url']}" for p, f in m.get("files", {}).items()
+                     if p.startswith("models/loras/") and f.get("url") and f.get("sha256"))
+
+
 def create() -> dict:
     """A new pod on the first of RUNPOD_GPUS with stock (gpuTypePriority custom = try them in order); RunPod answers 400 when none
     has any in the data center, which is said plainly (no fallback to the cloud)."""
@@ -97,7 +107,8 @@ def create() -> dict:
             "volumeMountPath": "/workspace", "ports": ["8188/http"],
             "dockerEntrypoint": ["/bin/bash", "-c"], "dockerStartCmd": [WATCHDOG.read_text()],
             "env": {"IDLE_SECONDS": str(round(config.RUNPOD_IDLE_MINUTES * 60)),
-                    "BOOT_SECONDS": str(READY_TIMEOUT + 120)}}  # the watchdog's own boot limit: past ours, so we delete it first
+                    "BOOT_SECONDS": str(READY_TIMEOUT + 120),  # the watchdog's own boot limit: past ours, so we delete it first
+                    "FETCH_FILES": _fetch_files()}}
     try:
         return _api("/pods", body, "POST")
     except PodError as e:
