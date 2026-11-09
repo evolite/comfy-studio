@@ -357,7 +357,9 @@ class Manager:
         """The clip-audio flags: --no-music (a scenario edit) or --clip-audio, each with its mutes."""
         if not req.get("no_music") and not (req.get("clip_audio") and req.get("mode") != "stills"):
             return flags
-        return flags + (["--no-music"] if req.get("no_music") else ["--clip-audio"]) + Manager._mute_flags(req)
+        if req.get("no_music"):
+            return flags + ["--no-music"] + Manager._mute_flags(req)
+        return flags + ["--clip-audio"] + (["--ambient-music"] if req.get("ambient_music") else []) + Manager._mute_flags(req)
 
     @staticmethod
     def edit_args(d, project, req, folder, stages):

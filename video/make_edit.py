@@ -32,6 +32,8 @@ on stage 1; the cuts start on the first beat at or after start + lead-in.
 --clip-audio layers the clips' own generated audio (dialogue, breathing, ambience) over the music: each clip's
 sound plays once at its stage's start (trimmed like the picture, atempo'd with a retimed one-cut stage),
 the music ducks under it (--duck, --music-volume, --clip-volume, --mute-clip-audio IDs). Video is unchanged.
+--ambient-music (with --clip-audio) makes the music sound like it plays from a speaker in the room: small-speaker band,
+narrower stereo, a little room echo and about 12 dB quieter, so the clips' own sound sits in front of it.
 
 --as-still IDs mixes the two: those stages show their still (Ken-Burns crops, --subcuts-per-image of them), every other stage
 its clip; --stills-from DIR takes the stills from another folder (interp/ has clips only). The edit stays at 48 fps when every
@@ -85,6 +87,9 @@ TRIM_START = 0.2  # seconds cut from the start of every video clip (i2v ramp-up)
 WIDTH, HEIGHT = 1080, 1920
 AFMT = "aformat=sample_rates=48000:channel_layouts=stereo"  # every audio input is brought to this before mixing
 AOUT = "[aout]"  # the filter graph's final audio pad
+# --ambient-music: band-limit to a small speaker, narrow the stereo, add early room reflections, then drop the level so a
+# loud master lands ~8 dB under typical clip audio (measured: -8 dB mean track -> ~-28 dB); --music-volume scales on top
+AMBIENT_MUSIC = "highpass=f=200,lowpass=f=5000,extrastereo=m=0.4,aecho=0.8:0.6:35|70:0.3|0.2,volume=0.4"
 # zoompan snaps its crop window to whole pixels each frame, so zooming/panning a
 # 1080-wide frame makes edges crawl/shimmer and punch-ins soft. Zoom on a frame
 # SUPERSAMPLE x larger and let zoompan scale down to the output size instead.
@@ -139,6 +144,7 @@ class EditOptions:
     music_volume: float = 1.0
     duck: float = 0.0             # how hard the music ducks under the clip audio
     mute_clip_audio: tuple = ()   # stage ids whose clip audio is left out
+    ambient_music: bool = False   # with clip_audio: the music plays as if from a speaker in the room (AMBIENT_MUSIC)
     fade_out: float = FADE_OUT
     as_still: tuple = ()          # stages that show their stage_N.png still instead of the clip
     stills_from: Path | None = None  # folder the --as-still stills come from
@@ -456,7 +462,8 @@ def voice_segments(cuts, muted=()):
     return segs
 
 
-def mux(clip_paths, build_dir, audio, audio_start, total_dur, out_path, voices=(), clip_volume=1.0, music_volume=1.0, duck=0.0, fade_out=FADE_OUT):
+def mux(clip_paths, build_dir, audio, audio_start, total_dur, out_path, voices=(), clip_volume=1.0, music_f="", duck=0.0, fade_out=FADE_OUT):
+    """Picture + music (through the filter chain music_f, e.g. a volume or AMBIENT_MUSIC) + the voices over it."""
     fade = min(max(0.0, fade_out), total_dur)
     fade_f = f"afade=t=out:st={total_dur - fade:.3f}:d={fade:.3f}" if fade > 0 else ""  # applied to the final mix
     concat_list = build_dir / "concat_list.txt"
@@ -465,8 +472,9 @@ def mux(clip_paths, build_dir, audio, audio_start, total_dur, out_path, voices=(
     subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat_list),
                     "-c", "copy", str(silent), "-loglevel", "error"], check=True)
     if not voices:
+        af = ",".join(f for f in (music_f, fade_f) if f)
         subprocess.run(["ffmpeg", "-y", "-i", str(silent), "-ss", str(audio_start), "-i", str(audio),
-                        "-map", "0:v", "-map", "1:a", "-t", str(total_dur), "-c:v", "copy", *(["-af", fade_f] if fade_f else []),
+                        "-map", "0:v", "-map", "1:a", "-t", str(total_dur), "-c:v", "copy", *(["-af", af] if af else []),
                         "-c:a", "aac", "-b:a", "192k", "-shortest", str(out_path), "-loglevel", "error"], check=True)
         return
     # inputs: 0 = picture, 1 = music, 2.. = one per voiced appearance
@@ -481,7 +489,7 @@ def mux(clip_paths, build_dir, audio, audio_start, total_dur, out_path, voices=(
     n = len(voices)
     voice_bus = f"{''.join(f'[v{k}]' for k in range(n))}amix=inputs={n}:normalize=0:duration=longest,apad[voice]" if n > 1 else "[v0]apad[voice]"
     chains.append(voice_bus)
-    chains.append(f"[1:a]{fmt},volume={music_volume}[music]")
+    chains.append(f"[1:a]{fmt}{',' + music_f if music_f else ''}[music]")
     if duck > 0:
         chains.append("[voice]asplit=2[vkey][vmix]")
         chains.extend([
@@ -711,10 +719,12 @@ def _render_cuts(cuts, build_dir, zoom) -> list:
 def _mux_and_sounds(cuts, clip_paths, build_dir, audio, audio_start, total_frames, out_path, collage, opts):
     """Lay the music (and the clips' own audio) under the picture, then the card sounds."""
     voices = voice_segments(cuts, set(opts.mute_clip_audio)) if opts.clip_audio else []
-    if opts.clip_audio:
-        print(f"  clip audio: {len(voices)} of {len({c.seg for c in cuts})} clips carry sound (music x{opts.music_volume}, "
-              f"voice x{opts.clip_volume}, duck {opts.duck})", flush=True)
-    mux(clip_paths, build_dir, audio, audio_start, total_frames / FPS, out_path, voices, opts.clip_volume, opts.music_volume,
+    music_f = ""
+    if opts.clip_audio:  # the music level / ambience apply even when no clip turned out to carry sound
+        music_f = ",".join(([AMBIENT_MUSIC] if opts.ambient_music else []) + ([f"volume={opts.music_volume}"] if opts.music_volume != 1 else []))
+        print(f"  clip audio: {len(voices)} of {len({c.seg for c in cuts})} clips carry sound (music x{opts.music_volume}"
+              f"{', ambient' if opts.ambient_music else ''}, voice x{opts.clip_volume}, duck {opts.duck})", flush=True)
+    mux(clip_paths, build_dir, audio, audio_start, total_frames / FPS, out_path, voices, opts.clip_volume, music_f,
         opts.duck, opts.fade_out)
     if not opts.card_sounds:
         return
@@ -947,6 +957,8 @@ def main():
     ap.add_argument("--clip-volume", type=float, default=1.0, help="Level of the clip-audio layer")
     ap.add_argument("--music-volume", type=float, default=1.0, help="Level of the music (with --clip-audio)")
     ap.add_argument("--duck", type=float, default=0.0, help="How hard the music ducks under the clip audio, 0 = off (with --clip-audio)")
+    ap.add_argument("--ambient-music", action="store_true",
+                    help="Music as if from a speaker in the room: thin, narrow, a little echo, well under the clip audio (with --clip-audio)")
     ap.add_argument("--fade-out", type=float, default=FADE_OUT, help=f"Seconds the audio fades out over at the end (default {FADE_OUT}; 0 = hard stop)")
     ap.add_argument("--as-still", type=int, nargs="+", default=[], metavar="ID",
                     help="Mix: these stages show their stage_N.png still (cut like --stills), the rest their clip")
@@ -970,7 +982,7 @@ def main():
     trims_end = {int(k): float(v) for k, v in (t.split("=") for t in a.trim_end)}
     opts = EditOptions(trims, trims_end, a.clip_audio, a.clip_volume, a.music_volume, a.duck, tuple(a.mute_clip_audio),
                        a.fade_out, tuple(a.as_still), a.stills_from, a.polaroid, tuple(a.collage), a.collage_from, a.card_size,
-                       a.collage_beats, a.card_sounds, a.card_sound_volume)
+                       a.collage_beats, a.card_sounds, a.card_sound_volume, ambient_music=a.ambient_music)
     if a.no_music:
         make_scenario(a.pipeline_dir, a.out_name, a.stills, a.order, a.transition, a.transition_seconds, a.still_seconds,
                       a.fade_in, opts)

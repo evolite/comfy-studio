@@ -289,7 +289,8 @@ function BeatControls({ music, audio, opts, setOpts, setO, num, beatsFile, fit, 
       <label className="chk inline"><input type="checkbox" checked={zoom} onChange={(e) => setZoom(e.target.checked)} /> punch-in zoom</label>
       {zoom && num("zoom", "zoom ×", "1.5")}
       {withClips && <label className="chk inline" title="layer each clip's own generated sound (dialogue, breathing, ambience) over the music; plays once at the clip's start, music ducks under it"><input type="checkbox" checked={clipAudio} onChange={(e) => setClipAudio(e.target.checked)} /> clip audio over music</label>}
-      {withClips && clipAudio && <>{num("clip_volume", "voice ×", "1.0")}{num("music_volume", "music ×", "1.0")}{num("duck", "duck (0–1)", "0")}</>}
+      {withClips && clipAudio && <>{num("clip_volume", "voice ×", "1.0")}{num("music_volume", "music ×", "1.0")}{num("duck", "duck (0–1)", "0")}
+        <label className="chk inline" title="the music sounds like it plays from a speaker in the room: thinner, narrower, a little echo and well under the clips' sound (music × still scales it)"><input type="checkbox" checked={!!opts.ambient_music} onChange={(e) => setOpts({ ...opts, ambient_music: e.target.checked ? "1" : "" })} /> ambient music</label></>}
     </div>
     <details className="advanced">
       <summary>Cut timing <span className="dim">blank = defaults: lead-in 2s, 2 beats per cut, 2 subcuts per still, last cut ×2, 0.5s fade-out</span></summary>
@@ -417,10 +418,10 @@ function useComposePrefs(name: string) {
   const [muted, setMuted] = useState<number[]>(() => loadJson(mkey, []));
   const toggleMute = (id: number) => setMuted((m) => { const n = m.includes(id) ? m.filter((x) => x !== id) : [...m, id]; store(mkey, n); return n; });
   const akey = `composeAudio:${name}`;  // clip-audio switch + its levels
-  const savedAudio = useMemo(() => loadJson<{ on?: boolean; clip_volume?: string; music_volume?: string; duck?: string }>(akey, {}), [akey]);
-  const [opts, setOpts] = useState<Record<string, string>>(() => Object.fromEntries((["clip_volume", "music_volume", "duck"] as const).filter((k) => savedAudio[k]).map((k) => [k, savedAudio[k]!])));
+  const savedAudio = useMemo(() => loadJson<{ on?: boolean; clip_volume?: string; music_volume?: string; duck?: string; ambient_music?: string }>(akey, {}), [akey]);
+  const [opts, setOpts] = useState<Record<string, string>>(() => Object.fromEntries((["clip_volume", "music_volume", "duck", "ambient_music"] as const).filter((k) => savedAudio[k]).map((k) => [k, savedAudio[k]!])));
   const [clipAudio, setClipAudio] = useState(!!savedAudio.on);
-  useEffect(() => store(akey, { on: clipAudio, clip_volume: opts.clip_volume, music_volume: opts.music_volume, duck: opts.duck }), [akey, clipAudio, opts.clip_volume, opts.music_volume, opts.duck]);
+  useEffect(() => store(akey, { on: clipAudio, clip_volume: opts.clip_volume, music_volume: opts.music_volume, duck: opts.duck, ambient_music: opts.ambient_music }), [akey, clipAudio, opts.clip_volume, opts.music_volume, opts.duck, opts.ambient_music]);
   return { folder, setFolder, mode, setMode, stillsFrom, setStillsFrom, kinds, setKind, trims, setTrim, trimsEnd, setTrimEnd, muted, toggleMute, opts, setOpts, clipAudio, setClipAudio };
 }
 
