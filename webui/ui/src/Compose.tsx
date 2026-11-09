@@ -4,6 +4,7 @@ import { api, clipKey, doneIn, fileUrl, Job, Project } from "./api";
 import { hoverPlay } from "./Board";
 import Lightbox from "./Lightbox";
 import { useJobs, useProject, useRun } from "./hooks";
+import { MixPreview } from "./MixPreview";
 import { ScenarioControls, StartSlider, useSaveMusic, useDefaultBeats, type Fit, type Music } from "./Music";
 
 type Audio = { tracks: string[]; beat_files: string[] };
@@ -13,6 +14,7 @@ type ClipKind = "clip" | "still";
 type Progress = { done: number; total: number };
 type EditFile = { name: string; mtime: number; size: number; folder?: string | null };
 let keySeq = 0;
+const TRIM_START = 0.2;  // video/make_edit.py TRIM_START: seconds cut from a clip's start when no trim is set
 
 const store = (key: string, v: unknown) => { try { localStorage.setItem(key, JSON.stringify(v)); } catch { /* storage unavailable */ } };
 function loadJson<T>(key: string, fallback: T): T {
@@ -266,9 +268,10 @@ function EditTile({ project, e, isNew, onOpen, onDelete }: { readonly project: s
 }
 
 /** Beat-synced sound + cut options. */
-function BeatControls({ music, audio, opts, setOpts, setO, num, beatsFile, fit, mode, zoom, setZoom, clipAudio, setClipAudio }: {
+function BeatControls({ music, audio, opts, setOpts, setO, num, beatsFile, fit, mode, zoom, setZoom, clipAudio, setClipAudio, voiceClip }: {
   readonly music: Music; readonly audio?: Audio; readonly opts: Record<string, string>; readonly setOpts: (o: Record<string, string>) => void; readonly setO: (k: string) => (e: { target: { value: string } }) => void;
   readonly num: (k: string, label: string, ph: string) => React.ReactNode; readonly beatsFile: string; readonly fit?: Fit; readonly mode: Mode; readonly zoom: boolean; readonly setZoom: (v: boolean) => void; readonly clipAudio: boolean; readonly setClipAudio: (v: boolean) => void;
+  readonly voiceClip?: { url: string; trim: number };  // the first unmuted clip on the strip, for the live mix preview
 }) {
   const extra = (have: string[] | undefined, v?: string) => (v && !have?.includes(v) ? [v] : []);
   const resetStart = () => setOpts(Object.fromEntries(Object.entries(opts).filter(([k]) => k !== "start_time")));
@@ -290,7 +293,10 @@ function BeatControls({ music, audio, opts, setOpts, setO, num, beatsFile, fit, 
       {zoom && num("zoom", "zoom ×", "1.5")}
       {withClips && <label className="chk inline" title="layer each clip's own generated sound (dialogue, breathing, ambience) over the music; plays once at the clip's start, music ducks under it"><input type="checkbox" checked={clipAudio} onChange={(e) => setClipAudio(e.target.checked)} /> clip audio over music</label>}
       {withClips && clipAudio && <>{num("clip_volume", "voice ×", "1.0")}{num("music_volume", "music ×", "1.0")}{num("duck", "duck (0–1)", "0")}
-        <label className="chk inline" title="the music sounds like it plays from a speaker in the room: thinner, narrower, a little echo and well under the clips' sound (music × still scales it)"><input type="checkbox" checked={!!opts.ambient_music} onChange={(e) => setOpts({ ...opts, ambient_music: e.target.checked ? "1" : "" })} /> ambient music</label></>}
+        <label className="chk inline" title="the music sounds like it plays from a speaker in the room: thinner, narrower, a little echo and well under the clips' sound (music × still scales it)"><input type="checkbox" checked={!!opts.ambient_music} onChange={(e) => setOpts({ ...opts, ambient_music: e.target.checked ? "1" : "" })} /> ambient music</label>
+        <MixPreview trackUrl={`/api/audio/track?beat_times_file=${encodeURIComponent(opts.beat_times_file || beatsFile)}&audio=${encodeURIComponent(opts.audio || music.audio || "")}`}
+          start={opts.start_time ? Number(opts.start_time) : fit?.start_time ?? 0} clipUrl={voiceClip?.url} clipTrim={voiceClip?.trim ?? 0}
+          musicVolume={Number(opts.music_volume || 1)} clipVolume={Number(opts.clip_volume || 1)} ambient={!!opts.ambient_music} /></>}
     </div>
     <details className="advanced">
       <summary>Cut timing <span className="dim">blank = defaults: lead-in 2s, 2 beats per cut, 2 subcuts per still, last cut ×2, 0.5s fade-out</span></summary>
@@ -536,6 +542,8 @@ export default function Compose({ name }: { readonly name: string }) {
     if (drag === null) return;
     const a = [...items]; const [m] = a.splice(drag, 1); a.splice(to, 0, m); commit(a, true); setDrag(null);
   };
+  const firstVoiced = items.find((i) => isClip(i.id) && !muted.includes(i.id) && fs?.clips?.[i.id]);
+  const voiceClip = firstVoiced && { url: fileUrl(name, folder, "clip", firstVoiced.id, fs!.clips[firstVoiced.id]), trim: Number(trims[firstVoiced.id] || TRIM_START) };
   const render = () => {
     run.mutate(editRequest({ folder, mode, items, isClip, sfolder, zoom, noMusic, clipAudio, trims, trimsEnd, muted, music, opts, pol, cfolder }), {
       onSuccess: () => { const t = setInterval(() => qc.invalidateQueries({ queryKey: ["project", name] }), 3000); setTimeout(() => clearInterval(t), 600000); },
@@ -576,7 +584,7 @@ export default function Compose({ name }: { readonly name: string }) {
 
       <section className="card cmp-card">
         <SoundHead noMusic={noMusic} onSwitch={(none) => void saveMusic({ none: none || undefined })} />
-        {noMusic ? <ScenarioControls name={name} /> : <BeatControls music={music} audio={audio} opts={opts} setOpts={setOpts} setO={setO} num={num} beatsFile={beatsFile} fit={fit} mode={mode} zoom={zoom} setZoom={setZoom} clipAudio={clipAudio} setClipAudio={setClipAudio} />}
+        {noMusic ? <ScenarioControls name={name} /> : <BeatControls music={music} audio={audio} opts={opts} setOpts={setOpts} setO={setO} num={num} beatsFile={beatsFile} fit={fit} mode={mode} zoom={zoom} setZoom={setZoom} clipAudio={clipAudio} setClipAudio={setClipAudio} voiceClip={voiceClip} />}
         <PolaroidControls pol={pol} setPol={setPolSaved} stills={collageStills} cfolder={cfolder} noMusic={noMusic} />
       </section>
 
