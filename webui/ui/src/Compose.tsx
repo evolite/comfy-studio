@@ -397,7 +397,8 @@ function EditsCard({ folder, list, nOther, showOther, onShowOther, tile, projBus
   );
 }
 
-/** Per-project UI state kept in browser storage: cut-from mode + folders, per-stage kinds, trims and mutes, the clip-audio switch + levels. */
+/** Per-project UI state kept in browser storage: cut-from mode + folders, per-stage kinds, trims and mutes, and the edit settings
+ * (track, beats, start time, cut timing, punch-in zoom, clip-audio switch + levels; the output name is per edit). */
 function useComposePrefs(name: string) {
   const vkey = `composeView:${name}`;
   const savedView = useMemo(() => loadJson<{ mode?: Mode; folder?: string; stillsFrom?: string | null }>(vkey, {}), [vkey]);
@@ -417,12 +418,13 @@ function useComposePrefs(name: string) {
   const mkey = `composeMute:${name}`;  // stages whose clip audio is left out of the mix
   const [muted, setMuted] = useState<number[]>(() => loadJson(mkey, []));
   const toggleMute = (id: number) => setMuted((m) => { const n = m.includes(id) ? m.filter((x) => x !== id) : [...m, id]; store(mkey, n); return n; });
-  const akey = `composeAudio:${name}`;  // clip-audio switch + its levels
-  const savedAudio = useMemo(() => loadJson<{ on?: boolean; clip_volume?: string; music_volume?: string; duck?: string; ambient_music?: string }>(akey, {}), [akey]);
-  const [opts, setOpts] = useState<Record<string, string>>(() => Object.fromEntries((["clip_volume", "music_volume", "duck", "ambient_music"] as const).filter((k) => savedAudio[k]).map((k) => [k, savedAudio[k]!])));
-  const [clipAudio, setClipAudio] = useState(!!savedAudio.on);
-  useEffect(() => store(akey, { on: clipAudio, clip_volume: opts.clip_volume, music_volume: opts.music_volume, duck: opts.duck, ambient_music: opts.ambient_music }), [akey, clipAudio, opts.clip_volume, opts.music_volume, opts.duck, opts.ambient_music]);
-  return { folder, setFolder, mode, setMode, stillsFrom, setStillsFrom, kinds, setKind, trims, setTrim, trimsEnd, setTrimEnd, muted, toggleMute, opts, setOpts, clipAudio, setClipAudio };
+  const akey = `composeAudio:${name}`;  // the edit settings: clip-audio switch, punch-in, and every opts field but the output name
+  const savedOpts = useMemo(() => loadJson<Record<string, unknown>>(akey, {}), [akey]);
+  const [opts, setOpts] = useState<Record<string, string>>(() => Object.fromEntries(Object.entries(savedOpts).filter(([k, v]) => typeof v === "string" && v !== "" && k !== "out_name")) as Record<string, string>);
+  const [clipAudio, setClipAudio] = useState(!!savedOpts.on);
+  const [zoom, setZoom] = useState(!!savedOpts.zoom_on);
+  useEffect(() => { const { out_name: _, ...keep } = opts; store(akey, { ...keep, on: clipAudio, zoom_on: zoom }); }, [akey, clipAudio, zoom, opts]);
+  return { folder, setFolder, mode, setMode, stillsFrom, setStillsFrom, kinds, setKind, trims, setTrim, trimsEnd, setTrimEnd, muted, toggleMute, opts, setOpts, clipAudio, setClipAudio, zoom, setZoom };
 }
 
 /** The timeline: the stages in project order (the Board's ⠿ order), synced both ways — a drag here reorders the project's
@@ -455,7 +457,7 @@ export default function Compose({ name }: { readonly name: string }) {
   const audio = useQuery({ queryKey: ["audio"], queryFn: () => api<Audio>("/audio") }).data;
   const run = useRun(name);
   const jobs = useJobs().data ?? [];
-  const { folder, setFolder, mode, setMode, stillsFrom, setStillsFrom, kinds, setKind, trims, setTrim, trimsEnd, setTrimEnd, muted, toggleMute, opts, setOpts, clipAudio, setClipAudio } = useComposePrefs(name);
+  const { folder, setFolder, mode, setMode, stillsFrom, setStillsFrom, kinds, setKind, trims, setTrim, trimsEnd, setTrimEnd, muted, toggleMute, opts, setOpts, clipAudio, setClipAudio, zoom, setZoom } = useComposePrefs(name);
   const [seen, setSeen] = useState<SeenEdits>(() => loadSeenEdits(name));
   useEffect(() => { setSeen(loadSeenEdits(name)); }, [name]);
   const markSeen = (file: string, mtime: number) => setSeen((prev) => {
@@ -463,7 +465,6 @@ export default function Compose({ name }: { readonly name: string }) {
     store(`seenedits:${name}`, n);
     return n;
   });
-  const [zoom, setZoom] = useState(false);
   const pkey = `composePolaroid:${name}`;
   const [polSaved, setPolSaved] = useState<Polaroid>(() => ({ ...NO_POLAROID, ...loadJson<Partial<Polaroid>>(pkey, {}), collage: [] }));
   useEffect(() => store(pkey, { on: polSaved.on, picked: polSaved.picked, size: polSaved.size, beats: polSaved.beats, sounds: polSaved.sounds, svol: polSaved.svol }), [pkey, polSaved]);

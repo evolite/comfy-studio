@@ -144,7 +144,6 @@ class EditOptions:
     music_volume: float = 1.0
     duck: float = 0.0             # how hard the music ducks under the clip audio
     mute_clip_audio: tuple = ()   # stage ids whose clip audio is left out
-    ambient_music: bool = False   # with clip_audio: the music plays as if from a speaker in the room (AMBIENT_MUSIC)
     fade_out: float = FADE_OUT
     as_still: tuple = ()          # stages that show their stage_N.png still instead of the clip
     stills_from: Path | None = None  # folder the --as-still stills come from
@@ -155,6 +154,7 @@ class EditOptions:
     collage_beats: int = 2        # beats between collage landings (beat-synced edit)
     card_sounds: bool = False     # a sound from config.POLAROID_SFX_DIR on every card landing
     card_sound_volume: float = 0.8
+    ambient_music: bool = False   # with clip_audio: the music plays as if from a speaker in the room (AMBIENT_MUSIC)
 
 
 def durations_to_frame_counts(durations):
