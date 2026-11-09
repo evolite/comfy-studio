@@ -51,7 +51,7 @@ def archive(d: Path, path: Path):
 def _prev_videos(dbg: Path, sid, project: str):
     """Archived clips from the pre-history folders: (file, folder label, kind)."""
     for p in (dbg / "prev_videos").glob(f"*stage_{sid}_*.mp4"):
-        m = re.fullmatch(rf"(.*?)_?stage_{sid}_[0-9a-f]+", p.stem)
+        m = re.fullmatch(rf"(.*?)_?stage_{re.escape(str(sid))}_[0-9a-f]+", p.stem)
         if m:
             yield p, "" if m.group(1) in ("", project) else m.group(1), "clip"
 
@@ -59,7 +59,7 @@ def _prev_videos(dbg: Path, sid, project: str):
 def _removed(dbg: Path, sid):
     """Stage files swept into _debug/removed: (file, folder label, kind)."""
     for p in (dbg / "removed").glob(f"*_stage_{sid}.*"):
-        m = re.fullmatch(rf"(.+?)_\d+_stage_{sid}", p.stem)
+        m = re.fullmatch(rf"(.+?)_\d+_stage_{re.escape(str(sid))}", p.stem)
         if m and p.suffix in (".png", ".mp4"):
             label = "" if m.group(1) == "root" else m.group(1)
             yield p, label, "clip" if p.suffix == ".mp4" else "still"

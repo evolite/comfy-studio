@@ -93,7 +93,9 @@ def _ws_connect(base, path):
     tls = u.scheme == "https"
     sock = socket.create_connection((u.hostname, u.port or (443 if tls else 80)), timeout=10)
     if tls:
-        sock = ssl.create_default_context().wrap_socket(sock, server_hostname=u.hostname)
+        ctx = ssl.create_default_context()
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        sock = ctx.wrap_socket(sock, server_hostname=u.hostname)
     key = base64.b64encode(os.urandom(16)).decode()
     sock.sendall((f"GET {path} HTTP/1.1\r\nHost: {u.netloc}\r\nUser-Agent: comfy-dashboard\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
                   f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n").encode())

@@ -505,7 +505,7 @@ def import_image(name, sid, url):
     import urllib.request
     from PIL import Image
     u = urllib.parse.urlparse(url.strip())
-    if u.scheme != "https" or not (u.hostname or "").endswith("civitai.com"):
+    if u.scheme != "https" or not ((u.hostname or "") == "civitai.com" or (u.hostname or "").endswith(".civitai.com")):
         raise ApiError("only https civitai.com image links are supported")
     d = project_dir(name)
     req = urllib.request.Request(u.geturl(), headers={"User-Agent": "Mozilla/5.0"})
@@ -579,8 +579,10 @@ def _validated_music(music) -> dict:
     """The scenario-edit settings, validated and coerced: numbers as floats, blanks dropped."""
     if music.get("beat_times_file"):
         beat_file(music["beat_times_file"])
-    if music.get("audio") and not Path(music["audio"]).is_file():
-        raise ApiError("audio file not found")
+    if music.get("audio"):
+        f = Path(music["audio"]).resolve()
+        if f.parent != config.AUDIO_DIR.resolve() or not f.is_file():
+            raise ApiError("audio must be a file in the audio folder")
     if music.get("transition") and music["transition"] not in make_edit.TRANSITIONS:
         raise ApiError(f"transition must be one of {', '.join(make_edit.TRANSITIONS)}")
     for k in SCENARIO_NUMS:

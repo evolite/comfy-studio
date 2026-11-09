@@ -283,6 +283,8 @@ def projects_new(body: dict = Body(...)):
         name = time.strftime("%Y%m%d_%H%M%S") + "_oneoff"
     if not P.NAME_RE.match(name) or (P.PIPELINES / name).exists():
         raise P.ApiError("invalid or existing project name")
+    if engine not in run_pipeline.ENGINES:
+        raise P.ApiError(f"engine must be one of {', '.join(run_pipeline.ENGINES)}")
     cmd = [sys.executable, str(ROOT / "project.py"), name, "new", "--engine", engine]
     if body.get("oneoff"):
         cmd.append("--oneoff")

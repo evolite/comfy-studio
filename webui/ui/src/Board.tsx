@@ -794,14 +794,8 @@ type Slot = { f: string; kind: "still" | "clip"; v: number };
 
 /** The results first, the references they were made from after them. */
 function sortSlots(slots: Slot[], phase: Phase) {
-  const last: Partial<Record<Phase, (x: Slot) => boolean>> = {
-    upscale: (x) => x.f === "preview",
-    finish: (x) => x.f !== "finish",
-    animate: (x) => x.kind !== "clip",
-    interp: (x) => x.f !== INTERP,
-  };
-  const isLast = last[phase];
-  if (isLast) slots.sort((a, b) => Number(isLast(a)) - Number(isLast(b)));
+  const isRef = (x: Slot) => Number(!isOwnOutput(phase, x.f, x.kind));
+  slots.sort((a, b) => isRef(a) - isRef(b));
 }
 
 /** Only this phase's own output can be new; earlier steps' files shown for reference never are. */

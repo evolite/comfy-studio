@@ -46,6 +46,16 @@ def _stamp(p: Path) -> dict:
     return {"size": st.st_size, "mtime_ns": st.st_mtime_ns}
 
 
+TAKE_ID = re.compile(r"\d{8}-\d{6}-\d{3}")
+
+
+def _take_file(sd: Path, tid: str, suffix: str) -> Path:
+    """<sd>/<tid><suffix>, refusing anything that isn't a take id (ids come from the web UI)."""
+    if not TAKE_ID.fullmatch(str(tid)):
+        raise FileNotFoundError(f"bad take id {tid!r}")
+    return sd / f"{tid}{suffix}"
+
+
 def current_id(d: Path, n):
     try:
         return json.loads((stage_dir(d, n) / "current").read_text()).get("id")
@@ -86,7 +96,7 @@ def add(d: Path, n, png: Path, graph: dict = None, rec: dict | None = None, make
 def set_current(d: Path, n, tid: str) -> bool:
     """Copy take `tid` onto preview/stage_N.png; returns whether the current take changed."""
     sd = stage_dir(d, n)
-    src = sd / f"{tid}.png"
+    src = _take_file(sd, tid, ".png")
     if not src.is_file():
         raise FileNotFoundError(f"no take {tid} for stage {n}")
     changed = current_id(d, n) != tid
@@ -148,7 +158,7 @@ def _sync_canonical(d: Path, n, sd: Path, canon: Path) -> None:
 
 def load_record(d: Path, n, tid: str):
     try:
-        rec = json.loads((stage_dir(d, n) / f"{tid}.json").read_text())
+        rec = json.loads(_take_file(stage_dir(d, n), tid, ".json").read_text())
     except (OSError, ValueError):
         return None
     return rec if "prompt" in rec else None  # external takes have only a stub
