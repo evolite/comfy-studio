@@ -3,7 +3,7 @@
 Per-project workflow. Everything for a project lives in data/pipelines/<name>/; ALL settings + prompts live in data/pipelines/<name>/project.json ({"engine": ..., "settings": {...}, "stages": [...]}):
 `settings` = run-wide engine tunables (upscale_factor, upscale_model, il_steps, ... -- keys in pipeline/graph_settings.py; the
 template's value applies when a key is absent); any of them can also be set on a single stage, which wins.
-each stage = id (stable unique int; stage_N.png/mp4), krea_scene, il_scene, `loras` (image LoRAs, {"name": strength}; names in the LoRA library), ... plus `motion` (i2v prompt) and optional `duration` (seconds, 1.0-10.0, snapped up to the i2v model's frame grid (MiniMax 17k+5, LTX 8k+1); the web UI offers lengths that fit the chosen music;
+each stage = id (stable unique int; stage_N.png/mp4), krea_scene, il_scene, `loras` (image LoRAs, {"name": strength}; names in the LoRA library), ... plus `motion` (i2v prompt) and optional `duration` (seconds, 1.0-15.0, snapped up to the i2v model's frame grid (MiniMax 17k+5, LTX 8k+1); the web UI offers lengths that fit the chosen music;
 default: 2.0, 2.9 for the last; aim for 2-4 s), `video_loras` (extra i2v LoRAs chained after the turbo one, as
 {"name": strength}, decimals ok, e.g. {"motion_lora": 1.0, "other_lora": 0.6}; names in the LoRA library) and
 optional `audio` (true = the i2v clip gets a generated soundtrack), optional `voice` (a voice-library name filling the motion's
@@ -89,7 +89,7 @@ import timings
 from stagegraph import check_stage_ids
 
 # each i2v model renders on its own frame grid at 24fps (animate_pipeline.frames); a requested duration snaps up to the next grid point
-MIN_DURATION, MAX_DURATION = 1.0, 10.0  # above 5.0 is untested on MiniMax
+MIN_DURATION, MAX_DURATION = 1.0, 15.0  # above 6.0 is untested on MiniMax
 
 
 def video_engine(cfg, stage):

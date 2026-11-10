@@ -250,8 +250,8 @@ def validate_stage(patch, label):
     if bad:
         raise ApiError(f"{label}: unknown fields {sorted(bad)}")
     d = patch.get("duration")
-    if d is not None and ("duration" in patch) and (isinstance(d, bool) or not isinstance(d, (int, float)) or not 1.0 <= d <= 10.0):
-        raise ApiError(f"{label}: duration must be between 1.0 and 10.0 seconds")
+    if d is not None and ("duration" in patch) and (isinstance(d, bool) or not isinstance(d, (int, float)) or not 1.0 <= d <= 15.0):
+        raise ApiError(f"{label}: duration must be between 1.0 and 15.0 seconds")
     if patch.get("voice") and patch["voice"] not in voice_registry.load()["voices"]:
         raise ApiError(f"{label}: no voice {patch['voice']!r} in the voice library")
     try:
