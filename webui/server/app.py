@@ -17,7 +17,6 @@ from fastapi.staticfiles import StaticFiles
 import loras
 import voices
 import projects as P
-import comfy_watch
 import config
 import jobs
 from jobs import ACTIONS, edit_timing, manager
@@ -37,7 +36,6 @@ app = FastAPI(title="Comfy Studio")
 @app.on_event("startup")
 def recover_cloud_clips():
     manager.recover_orphans()
-    comfy_watch.start()
 
 
 @app.exception_handler(P.ApiError)
@@ -217,7 +215,6 @@ def local_restart():
     """Restart the local ComfyUI user service (it crashes under VRAM pressure); local jobs in flight are cancelled first."""
     for j in [j for j in manager.jobs.values() if j.lane == "local" and j.status in ("queued", "running")]:
         manager.cancel(j.id)
-    comfy_watch.expect_restart()
     r = subprocess.run(["systemctl", "--user", "restart", config.COMFYUI_SERVICE], capture_output=True, text=True, timeout=60)
     if r.returncode:
         raise P.ApiError(f"restart failed: {r.stderr.strip() or r.returncode}", 500)

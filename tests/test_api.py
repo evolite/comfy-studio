@@ -271,15 +271,6 @@ def test_app_settings_pushover_keys(monkeypatch):
     assert config.pushover() == ("", "") and c.get("/api/app-settings").json()["pushover_from"] is None
 
 
-def test_comfy_watch_messages():
-    from comfy_watch import change
-    up, up2 = ("active", "100", "success"), ("active", "200", "success")
-    assert change(up, up) is None and change(None, up) is None
-    assert change(up, ("failed", "0", "oom-kill")) == "Local ComfyUI is down: failed (oom-kill)"
-    assert change(("activating", "0", "oom-kill"), up2) == "Local ComfyUI is back up"
-    assert change(up, up2) == "Local ComfyUI restarted"
-
-
 def _batch_project(name="20261010_batch"):
     import json
     d = config.PIPELINES_DIR / name

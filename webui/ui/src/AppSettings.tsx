@@ -106,8 +106,7 @@ function Pushover({ s, onSaved }: { readonly s: AppSettings; readonly onSaved: (
   const test = () => { setMsg("sending…"); api("/app-settings/test-push", "POST").then(() => setMsg("test push sent ✓ check your phone"), (e: Error) => setMsg(`✗ ${e.message}`)); };
   return (
     <section className="panel">
-      <h3>Pushover notifications <Hint>The bell in the header pushes to your phone when the job queue empties, and when the local ComfyUI goes down
-        or restarts. Get a user key and create an application token at pushover.net. Messages carry job ids, never project names.</Hint></h3>
+      <h3>Pushover notifications <Hint>The bell in the header pushes to your phone when the job queue empties. Get a user key and create an application token at pushover.net. Messages carry job ids, never project names.</Hint></h3>
       <label><span>User key</span>
         <input type="text" autoComplete="off" spellCheck={false} value={user ?? s.pushover_user} placeholder="uQiRzpo4DXghDmr9QzzfQu27cmVRsG"
           onChange={(e) => setUser(e.target.value)} />
