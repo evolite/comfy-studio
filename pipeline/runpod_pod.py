@@ -96,14 +96,26 @@ def _fetch_files() -> str:
 
 
 def create(gpus=None) -> dict:
-    """A new pod on the first of RUNPOD_GPUS with stock (gpuTypePriority custom = try them in order); RunPod answers 400 when none
-    has any in the data center, which is said plainly (no fallback to the cloud)."""
+    """A new pod on the first of RUNPOD_GPUS with stock. RunPod's custom priority alone handed out PRO 4500s while 6000s were
+    listed first, so the 96 GB cards (RUNPOD_BIG_GPUS) are asked for on their own first and the full list only when none is free.
+    RunPod answers 400 when none has any in the data center, which is said plainly (no fallback to the cloud)."""
     if not config.RUNPOD_VOLUME_ID:
         raise PodError("RUNPOD_VOLUME_ID is not set: add it to .env")
     if not config.RUNPOD_DATACENTER:
         raise PodError("RUNPOD_DATACENTER is not set: add the volume's data center (e.g. EU-RO-1) to .env")
+    gpus = gpus or config.RUNPOD_GPUS
+    first = [g for g in gpus if g in config.RUNPOD_BIG_GPUS]
+    for tier in ([first, gpus] if first and first != gpus else [gpus]):
+        try:
+            return _post(tier)
+        except NoGpu:
+            if tier is gpus:
+                raise
+
+
+def _post(gpus) -> dict:
     body = {"name": NAME, "imageName": config.RUNPOD_IMAGE, "cloudType": "SECURE", "computeType": "GPU", "gpuCount": 1,
-            "gpuTypeIds": gpus or config.RUNPOD_GPUS, "gpuTypePriority": "custom", "dataCenterIds": [config.RUNPOD_DATACENTER], "networkVolumeId": config.RUNPOD_VOLUME_ID,
+            "gpuTypeIds": gpus, "gpuTypePriority": "custom", "dataCenterIds": [config.RUNPOD_DATACENTER], "networkVolumeId": config.RUNPOD_VOLUME_ID,
             "volumeMountPath": "/workspace", "ports": ["8188/http"],
             "dockerEntrypoint": ["/bin/bash", "-c"], "dockerStartCmd": [WATCHDOG.read_text()],
             "env": {"IDLE_SECONDS": str(round(config.RUNPOD_IDLE_MINUTES * 60)),
