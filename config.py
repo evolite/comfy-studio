@@ -64,6 +64,9 @@ RUNPOD_GPUS = [g.strip() for g in os.environ.get("RUNPOD_GPUS", ",".join([
     "NVIDIA RTX PRO 6000 Blackwell Server Edition",  # not the Workstation Edition: ~1130 s/clip vs ~100 (pod fqpfmm5vu5ptf8)
     "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition",
     "NVIDIA RTX PRO 4500 Blackwell", "NVIDIA GeForce RTX 5090", "NVIDIA RTX PRO 5000 Blackwell"])).split(",") if g.strip()]
+# a clip longer than RUNPOD_BIG_SECONDS needs a 96 GB card: 15 s (362 frames) took down ComfyUI on the 32 GB RTX PRO 4500
+RUNPOD_BIG_GPUS = [g.strip() for g in os.environ.get("RUNPOD_BIG_GPUS", ",".join(RUNPOD_GPUS[:2])).split(",") if g.strip()]
+RUNPOD_BIG_SECONDS = float(os.environ.get("RUNPOD_BIG_SECONDS", "10"))
 RUNPOD_GPU_WAIT_MINUTES = float(os.environ.get("RUNPOD_GPU_WAIT_MINUTES", "30"))  # none of RUNPOD_GPUS free: keep asking this long
 RUNPOD_IDLE_MINUTES = float(os.environ.get("RUNPOD_IDLE_MINUTES", "2"))  # the pod deletes itself after this long with nothing to do
 # (counted once ComfyUI is up: the boot gets its own limit, runpod_pod.READY_TIMEOUT); a batch queues every clip up front, so 2 min

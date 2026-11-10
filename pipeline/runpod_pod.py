@@ -95,7 +95,7 @@ def _fetch_files() -> str:
                      if p.startswith("models/loras/") and f.get("url") and f.get("sha256"))
 
 
-def create() -> dict:
+def create(gpus=None) -> dict:
     """A new pod on the first of RUNPOD_GPUS with stock (gpuTypePriority custom = try them in order); RunPod answers 400 when none
     has any in the data center, which is said plainly (no fallback to the cloud)."""
     if not config.RUNPOD_VOLUME_ID:
@@ -103,7 +103,7 @@ def create() -> dict:
     if not config.RUNPOD_DATACENTER:
         raise PodError("RUNPOD_DATACENTER is not set: add the volume's data center (e.g. EU-RO-1) to .env")
     body = {"name": NAME, "imageName": config.RUNPOD_IMAGE, "cloudType": "SECURE", "computeType": "GPU", "gpuCount": 1,
-            "gpuTypeIds": config.RUNPOD_GPUS, "gpuTypePriority": "custom", "dataCenterIds": [config.RUNPOD_DATACENTER], "networkVolumeId": config.RUNPOD_VOLUME_ID,
+            "gpuTypeIds": gpus or config.RUNPOD_GPUS, "gpuTypePriority": "custom", "dataCenterIds": [config.RUNPOD_DATACENTER], "networkVolumeId": config.RUNPOD_VOLUME_ID,
             "volumeMountPath": "/workspace", "ports": ["8188/http"],
             "dockerEntrypoint": ["/bin/bash", "-c"], "dockerStartCmd": [WATCHDOG.read_text()],
             "env": {"IDLE_SECONDS": str(round(config.RUNPOD_IDLE_MINUTES * 60)),
@@ -171,12 +171,12 @@ def last_run():
             "ended": rec["seen"]}
 
 
-def _create_waiting(log) -> dict:
-    """create(), asking again every GPU_RETRY_S while none of RUNPOD_GPUS is free, for up to RUNPOD_GPU_WAIT_MINUTES."""
+def _create_waiting(log, gpus=None) -> dict:
+    """create(gpus), asking again every GPU_RETRY_S while none of RUNPOD_GPUS is free, for up to RUNPOD_GPU_WAIT_MINUTES."""
     t, said = time.time(), 0.0
     while True:
         try:
-            return create()
+            return create(gpus)
         except NoGpu as e:
             waited = time.time() - t
             if waited >= config.RUNPOD_GPU_WAIT_MINUTES * 60:
@@ -188,19 +188,32 @@ def _create_waiting(log) -> dict:
             time.sleep(GPU_RETRY_S)
 
 
-def ensure_up(log=print) -> str:
-    """The URL of a pod whose ComfyUI answers: the running one, else a new one (a stopped or dead leftover is terminated first)."""
+def _on(pod: dict, gpus) -> bool:
+    """Did the pod get one of these GPU types?"""
+    g, m = pod.get("gpu") or {}, pod.get("machine") or {}
+    return bool({g.get("id"), g.get("displayName"), m.get("gpuTypeId")} & set(gpus))
+
+
+def ensure_up(log=print, big=False) -> str:
+    """The URL of a pod whose ComfyUI answers: the running one, else a new one (a stopped or dead leftover is terminated first).
+    big = a clip longer than config.RUNPOD_BIG_SECONDS: only RUNPOD_BIG_GPUS will do, so a smaller running pod is replaced (the
+    runpod lane runs one job at a time, so it has nothing of ours on it)."""
     t, created = time.time(), False
+    gpus = config.RUNPOD_BIG_GPUS if big else config.RUNPOD_GPUS
     pod = find()
     if pod and pod.get("desiredStatus") != "RUNNING":
         log(f"terminating the leftover pod {pod['id']} ({pod.get('desiredStatus')})")
         terminate(pod["id"])
         pod = None
+    if pod and big and not _on(pod, gpus):
+        log(f"clips over {config.RUNPOD_BIG_SECONDS:g} s need a 96 GB GPU: replacing pod {pod['id']} ({gpu_name(pod)})")
+        terminate(pod["id"])
+        pod = None
     if pod:
         log(f"RunPod pod {pod['id']} is running on {gpu_name(pod)} (${pod.get('costPerHr', '?')}/hr)")
     else:
-        log(f"starting RunPod pod… (first free of {len(config.RUNPOD_GPUS)} Blackwell types, {config.RUNPOD_DATACENTER})")
-        pod = _create_waiting(log)
+        log(f"starting RunPod pod… (first free of {len(gpus)} {'96 GB ' if big else ''}Blackwell types, {config.RUNPOD_DATACENTER})")
+        pod = _create_waiting(log, gpus)
         created = True
         log(f"pod {pod['id']} created on {gpu_name(pod)} (${pod.get('costPerHr', '?')}/hr while up; it deletes itself after "
             f"{config.RUNPOD_IDLE_MINUTES:g} min idle)")
@@ -217,7 +230,7 @@ def ensure_up(log=print) -> str:
             if created or ": 404 " not in str(e):
                 raise
             log(f"pod {pod['id']} is gone (its watchdog deleted it), starting a new one")
-            return ensure_up(log)
+            return ensure_up(log, big)
         if desired != "RUNNING":
             raise PodError(f"pod {pod['id']} stopped while booting -- see the RunPod console")
         if time.time() - said > 60:

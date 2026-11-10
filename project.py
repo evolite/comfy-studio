@@ -431,20 +431,21 @@ def animate_cmd(a, src, only):
     voices = voice_registry.load()["voices"]  # {voice...} slots filled here, so the pipeline (and _debug graphs) see the final text
     motions = {n: voice_registry.expand(ids[n]["motion"], voice_registry.cast_of(ids[n], cfg), f"stage {n}", voices) for n in todo}
     save(motion_p, {str(n): lora_registry.with_video_triggers(motions[n], ids[n].get("video_loras", {})) for n in todo})
-    save(dur_p, {str(n): stage_duration(stages, n, video_engine(cfg, ids[n])) for n in todo})
+    durs = {n: stage_duration(stages, n, video_engine(cfg, ids[n])) for n in todo}
+    save(dur_p, {str(n): v for n, v in durs.items()})
     save(engine_p, {str(n): video_engine(cfg, ids[n]) for n in todo})
     save(lora_p, {str(n): ids[n].get("video_loras", {}) for n in todo})
     save(seed_p, {str(n): ids[n]["video_seed"] for n in todo if "video_seed" in ids[n]})
     save(audio_p, {str(n): True for n in todo if ids[n].get("audio")})
     return [sys.executable, str(ROOT / "video" / "animate_pipeline.py"), str(src), "--motion-prompts", str(motion_p),
             "--durations", str(dur_p), "--loras", str(lora_p), "--seeds", str(seed_p), "--audio", str(audio_p), "--engines", str(engine_p)] + (["--megapixels", str(cfg["video_megapixels"])] if cfg.get("video_megapixels") else []) \
-        + (["--rife-dir", str(d / interpolate.FOLDER)] if a.rife else []) + (["--server", pod_server()] if a.target == "runpod" and todo else [])
+        + (["--rife-dir", str(d / interpolate.FOLDER)] if a.rife else []) + (["--server", pod_server(any(v["duration_value"] > config.RUNPOD_BIG_SECONDS for v in durs.values()))] if a.target == "runpod" and todo else [])
 
 
-def pod_server():
-    """The RunPod pod's ComfyUI URL, starting the pod when none is up (minutes; the log says how long)."""
+def pod_server(big=False):
+    """The RunPod pod's ComfyUI URL, starting the pod when none is up (minutes; the log says how long); big = a 96 GB one."""
     try:
-        return runpod_pod.ensure_up(lambda m: print(m, flush=True))
+        return runpod_pod.ensure_up(lambda m: print(m, flush=True), big)
     except runpod_pod.PodError as e:
         sys.exit(f"RunPod: {e}")
 
