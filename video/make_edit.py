@@ -90,7 +90,7 @@ FPS = 30  # the edit's frame rate; make_edit() raises it to HI_FPS when every cl
 HI_FPS = 48  # RIFE x2 of the 24 fps i2v clips (video/interpolate.py): render at their own rate, no frame dropping
 FADE_OUT = 0.5  # seconds the music fades out over at the end of the edit (--fade-out; 0 = hard stop)
 TRIM_START = 0.2  # seconds cut from the start of every video clip (i2v ramp-up); stills are untouched
-WIDTH, HEIGHT = 1080, 1920
+WIDTH, HEIGHT = 1080, 1920  # the edit's frame; set_frame() keeps the width and takes the height from the shots' own proportions
 AFMT = "aformat=sample_rates=48000:channel_layouts=stereo"  # every audio input is brought to this before mixing
 AOUT = "[aout]"  # the filter graph's final audio pad
 # --ambient-music: band-limit to a small speaker, narrow the stereo, add early room reflections, then drop the level so a
@@ -383,7 +383,7 @@ def _scale_filters(cut, zoom, x, y) -> list:
 
 
 def cut_filters(cut, punch_zoom=1.5):
-    """(ffmpeg input args, video filter list) that turn the cut's source into its graded 1080x1920 frames."""
+    """(ffmpeg input args, video filter list) that turn the cut's source into its graded WIDTH x HEIGHT frames."""
     n = cut.frames
     if cut.lead_in:
         zoom = "1.0"
@@ -656,6 +656,22 @@ def beat_collage(beat_times, audio_start, start_frame, n, every):
     return frame(b0 + (n - 1) * every + COLLAGE_HOLD_BEATS), land_at
 
 
+def set_frame(clips) -> None:
+    """Match the edit's frame to its shots' proportions (the first shot's; i2v clips and their stills share one), 1080 wide,
+    so nothing is cropped off the sides: a 2:3 clip makes a 1080x1620 edit. The polaroid frames follow."""
+    global HEIGHT
+    src = clips[0]
+    if src.suffix == ".png":
+        from PIL import Image
+        w, h = Image.open(src).size
+    else:
+        out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height",
+                              "-of", "csv=p=0", str(src)], capture_output=True, text=True, check=True).stdout
+        w, h = map(int, out.strip().split(",")[:2])
+    HEIGHT = 2 * round(WIDTH * h / w / 2)
+    polaroid.W, polaroid.H = WIDTH, HEIGHT
+
+
 def _apply_opts(opts):
     """Set the module-wide per-edit state (trims, polaroid look) from the options."""
     TRIMS.clear()
@@ -773,6 +789,7 @@ def make_edit(pipeline_dir, out_name=None, audio=None, beat_times_file=DEFAULT_B
     if len(clips) < 2:
         raise FileNotFoundError(f"Need at least 2 stages (clips or stills) in {pipeline_dir}")
     FPS = edit_fps(clips)
+    set_frame(clips)
     p = stage_index(clips, opts.music_from_stage)
     prefix, clips = scenario_cuts(clips[:p], STILL_SECONDS, 0)[0] if p else [], clips[p:]
     if len(clips) < 2:
@@ -815,7 +832,7 @@ def make_edit(pipeline_dir, out_name=None, audio=None, beat_times_file=DEFAULT_B
           f"{n_cuts} cuts (last={cuts[-1].frames} frames), lead-in {lead_in:.2f}s, "
           f"punch-in {f'{zoom}x' if zoom else 'off'}, music from {audio_start:.2f}s, first cut at {punch_start:.2f}s, "
           f"{f'{len(prefix)} stages in full before the music ({prefix_frames / FPS:.2f}s), ' if prefix else ''}"
-          f"total {total_frames} frames / {total_frames / FPS:.3f}s at {FPS} fps", flush=True)
+          f"total {total_frames} frames / {total_frames / FPS:.3f}s at {FPS} fps, {WIDTH}x{HEIGHT}", flush=True)
 
     build_dir = pipeline_dir / "_debug" / "edit_build_beatsync"
     shutil.rmtree(build_dir, ignore_errors=True)  # no stale cuts from a previous layout
@@ -946,6 +963,7 @@ def make_scenario(pipeline_dir, out_name=None, stills=False, order=None, transit
     if len(clips) < 2:
         raise FileNotFoundError(f"Need at least 2 stages (clips or stills) in {pipeline_dir}")
     FPS = edit_fps(clips)
+    set_frame(clips)
     collage_files = collage_stills(pipeline_dir, opts) if opts.collage else []
     if opts.card_sounds:
         card_sound_files()
