@@ -5,7 +5,7 @@ import { hoverPlay } from "./Board";
 import Lightbox from "./Lightbox";
 import { useJobs, useProject, useRun } from "./hooks";
 import { MixPreview } from "./MixPreview";
-import { ScenarioControls, StartSlider, useSaveMusic, useDefaultBeats, type Fit, type Music } from "./Music";
+import { ScenarioControls, StartSlider, useDefaultBeats, type Fit, type Music } from "./Music";
 
 type Audio = { tracks: string[]; beat_files: string[] };
 type Item = { key: number; id: number };
@@ -73,10 +73,13 @@ async function cleanupProject(name: string, onCleaned: () => void): Promise<stri
   } catch (e) { return `error: ${(e as Error).message}`; }
 }
 
-/** The project's active edit job of this kind (beat-synced / no-music), and of the other kind. */
-function editJobsOf(jobs: Job[], project: string, noMusic: boolean): [Job | undefined, Job | undefined] {
+/** A full-length edit (every stage in full: no music, or music without beat sync), as the server's edit_kind counts it. */
+const isFullLength = (req: Job["req"]) => !!req.no_music || req.beat_sync === false;
+
+/** The project's active edit job of this kind (beat-synced / full-length), and of the other kind. */
+function editJobsOf(jobs: Job[], project: string, full: boolean): [Job | undefined, Job | undefined] {
   const active = jobs.filter((j) => j.project === project && j.action === "edit" && isActive(j));
-  return [active.find((j) => !!j.req.no_music === noMusic), active.find((j) => !!j.req.no_music !== noMusic)];
+  return [active.find((j) => isFullLength(j.req) === full), active.find((j) => isFullLength(j.req) !== full)];
 }
 
 /** What a stage is cut as: fixed by the mode, or in a mix what you picked, else its clip when it has one. */
@@ -119,7 +122,7 @@ function mergeOrder(all: number[], seq: number[]): number[] {
 }
 
 type EditReqArgs = {
-  folder: string; mode: Mode; items: Item[]; isClip: (id: number) => boolean; sfolder: string; zoom: boolean; noMusic: boolean; clipAudio: boolean;
+  folder: string; mode: Mode; items: Item[]; isClip: (id: number) => boolean; sfolder: string; zoom: boolean; musicOn: boolean; beatSync: boolean;
   trims: Record<number, string>; trimsEnd: Record<number, string>; muted: number[]; music: Music; opts: Record<string, string>;
   pol: Polaroid; cfolder: string;
 };
@@ -144,41 +147,54 @@ function polaroidFields(a: EditReqArgs): Record<string, unknown> {
   const { pol } = a;
   const req: Record<string, unknown> = {};
   if (pol.on) req.polaroid = true;
-  if (pol.collage.length) { req.collage = pol.collage; req.collage_from = a.cfolder; if (pol.beats && !a.noMusic) req.collage_beats = Number(pol.beats); }
+  if (pol.collage.length) { req.collage = pol.collage; req.collage_from = a.cfolder; if (pol.beats && a.musicOn && a.beatSync) req.collage_beats = Number(pol.beats); }
   if ((pol.on || pol.collage.length) && pol.size) req.card_size = Number(pol.size);
   if ((pol.on || pol.collage.length) && pol.sounds) { req.card_sounds = true; if (pol.svol) req.card_sound_volume = Number(pol.svol); }
   return req;
 }
 
 const STRING_OPTS = new Set(["audio", "beat_times_file", "out_name"]);
+const MUSIC_OPTS = ["audio", "beat_times_file", "start_time", "music_volume", "duck", "music_from_stage"];  // the music layer's fields
+const SYNC_OPTS = ["lead_in_seconds", "beats_per_cut", "subcuts_per_image", "last_weight", "zoom"];  // only a beat-synced edit takes these
+const BOOL_OPTS = new Set(["ambient_music"]);
 
-/** The no-music fields of an edit request: scenario settings + clip audio mutes. */
-function scenarioFields(a: EditReqArgs, mutedHere: number[]) {
-  const req: Record<string, unknown> = { no_music: true, mute_clip_audio: mutedHere };
+/** The full-length layout's fields (every stage in full, flowing into the next): the Settings → Music scenario settings. */
+function scenarioFields(a: EditReqArgs) {
+  const req: Record<string, unknown> = {};
   for (const k of ["transition", "transition_seconds", "still_seconds", "fade_in", "fade_out"] as const) if (a.music[k] != null) req[k] = a.music[k];
-  if (a.opts.out_name) req.out_name = a.opts.out_name;
   return req;
 }
 
-/** The beat-synced fields of an edit request: music + cut options, numbers as numbers. */
-function beatFields(a: EditReqArgs, mutedHere: number[]) {
+/** The opts fields of an edit request, numbers as numbers, the music's and the sync's only when they apply. */
+function optFields(a: EditReqArgs) {
   const req: Record<string, unknown> = {};
-  if (a.mode !== "stills" && a.clipAudio) { req.clip_audio = true; req.mute_clip_audio = mutedHere; }
   for (const [k, v] of Object.entries({ audio: a.music.audio, beat_times_file: a.music.beat_times_file, ...a.opts })) {
-    if (v !== "" && v != null) req[k] = STRING_OPTS.has(k) ? v : Number(v);
+    if (v === "" || v == null) continue;
+    if ((MUSIC_OPTS.includes(k) || BOOL_OPTS.has(k)) && !a.musicOn) continue;
+    if ((SYNC_OPTS.includes(k) || k === "fade_out") && !(a.musicOn && a.beatSync)) continue;  // the full-length layout fades by Settings → Music
+    req[k] = BOOL_OPTS.has(k) ? true : STRING_OPTS.has(k) ? v : Number(v);
   }
   return req;
 }
 
+/** The sound fields: the clips' own sound is always the base (mutes per chip); the music an optional layer over it, beat-synced
+ * or not. No music / no sync = the full-length layout. */
+function soundFields(a: EditReqArgs, mutedHere: number[]) {
+  const req: Record<string, unknown> = { mute_clip_audio: mutedHere, ...optFields(a) };
+  if (!a.musicOn) return { ...req, no_music: true, ...scenarioFields(a) };
+  if (!a.beatSync) return { ...req, beat_sync: false, ...scenarioFields(a) };
+  return { ...req, beat_sync: true, clip_audio: a.mode !== "stills" };
+}
+
 /** The POST body of an edit run. */
 function editRequest(a: EditReqArgs): Record<string, unknown> {
-  const { items, isClip, mode, noMusic } = a;
-  const req: Record<string, unknown> = { action: "edit", folder: a.folder, mode: mode === "mix" ? "animate" : mode, stages: items.map((i) => i.id), zoom: (!noMusic && a.zoom) || undefined };
+  const { items, isClip, mode } = a;
+  const req: Record<string, unknown> = { action: "edit", folder: a.folder, mode: mode === "mix" ? "animate" : mode, stages: items.map((i) => i.id), zoom: (a.musicOn && a.beatSync && a.zoom) || undefined };
   if (mode === "mix") { req.still_stages = [...new Set(items.filter((i) => !isClip(i.id)).map((i) => i.id))]; req.stills_from = a.sfolder; }
   const forClips = (t: Record<number, string>) => Object.fromEntries(Object.entries(t).filter(([id, v]) => v !== "" && items.some((i) => i.id === Number(id) && isClip(i.id))));
   if (mode !== "stills") { req.trims = forClips(a.trims); req.trims_end = forClips(a.trimsEnd); }
   const mutedHere = a.muted.filter((id) => items.some((i) => i.id === id));
-  return { ...req, ...(noMusic ? scenarioFields(a, mutedHere) : beatFields(a, mutedHere)), ...polaroidFields(a) };
+  return { ...req, ...soundFields(a, mutedHere), ...polaroidFields(a) };
 }
 
 const NO_ELIGIBLE: Record<Mode, string> = {
@@ -255,27 +271,27 @@ function Chip({ it, i, dragging, clip, thumb, canSwitch, audible, muted, trim, t
 /** One finished edit: hover plays it, a click opens the viewer. */
 function EditTile({ project, e, isNew, onOpen, onDelete }: { readonly project: string; readonly e: EditFile; readonly isNew: boolean; readonly onOpen: () => void; readonly onDelete: () => void }) {
   const noMusic = /_nomusic_/.test(e.name);
+  const tag = noMusic ? "no music" : /_music_/.test(e.name) ? "music" : "beat";  // jobs.py _name_flag: _nomusic_ / _music_ (unsynced) / _edit_
   return (
     <figure className={isNew ? "newitem" : ""}>
       <button type="button" className="mediabtn" onClick={onOpen} aria-label={`play ${baseName(e.name)}`} {...hoverPlay}>
         <video muted preload="metadata" src={`/api/projects/${project}/files/${e.name}?v=${e.mtime}`} />
       </button>
-      <figcaption><span className={`kindtag${noMusic ? " nm" : ""}`}>{noMusic ? "no music" : "beat"}</span> {baseName(e.name).replace(`${project}_`, "")} ▶{isNew && <b className="newtag"> · new</b>}<br />{(e.size / 1e6).toFixed(1)} MB · {new Date(e.mtime * 1000).toLocaleString()}</figcaption>
+      <figcaption><span className={`kindtag${noMusic ? " nm" : ""}`}>{tag}</span> {baseName(e.name).replace(`${project}_`, "")} ▶{isNew && <b className="newtag"> · new</b>}<br />{(e.size / 1e6).toFixed(1)} MB · {new Date(e.mtime * 1000).toLocaleString()}</figcaption>
       <button className="btn sm reveal" title="open in folder" onClick={(ev) => { ev.stopPropagation(); void api(`/projects/${project}/reveal`, "POST", { path: e.name }); }}>📂</button>
       <button className="btn sm danger del" onClick={(ev) => { ev.stopPropagation(); onDelete(); }}>✕</button>
     </figure>
   );
 }
 
-/** Beat-synced sound + cut options. */
-function BeatControls({ music, audio, opts, setOpts, setO, num, beatsFile, fit, mode, zoom, setZoom, clipAudio, setClipAudio, voiceClip }: {
+/** The music layer over the clips' sound: track, where it comes in (stage + time in the song), its level, ducking, ambience. */
+function MusicControls({ music, audio, opts, setOpts, setO, num, beatsFile, fit, stages, voiceClip }: {
   readonly music: Music; readonly audio?: Audio; readonly opts: Record<string, string>; readonly setOpts: (o: Record<string, string>) => void; readonly setO: (k: string) => (e: { target: { value: string } }) => void;
-  readonly num: (k: string, label: string, ph: string) => React.ReactNode; readonly beatsFile: string; readonly fit?: Fit; readonly mode: Mode; readonly zoom: boolean; readonly setZoom: (v: boolean) => void; readonly clipAudio: boolean; readonly setClipAudio: (v: boolean) => void;
+  readonly num: (k: string, label: string, ph: string) => React.ReactNode; readonly beatsFile: string; readonly fit?: Fit; readonly stages: number[];
   readonly voiceClip?: { url: string; trim: number };  // the first unmuted clip on the strip, for the live mix preview
 }) {
   const extra = (have: string[] | undefined, v?: string) => (v && !have?.includes(v) ? [v] : []);
   const resetStart = () => setOpts(Object.fromEntries(Object.entries(opts).filter(([k]) => k !== "start_time")));
-  const withClips = mode !== "stills";
   return <>
     <div className="row wrap">
       <label className="field"><span>track</span>
@@ -284,19 +300,29 @@ function BeatControls({ music, audio, opts, setOpts, setO, num, beatsFile, fit, 
       <label className="field"><span>beat times</span>
         <select value={opts.beat_times_file ?? music.beat_times_file ?? ""} onChange={setO("beat_times_file")}><option value="">default</option>{[...(audio?.beat_files ?? []), ...extra(audio?.beat_files, music.beat_times_file)].map((t) => <option key={t}>{t}</option>)}</select>
       </label>
-      <StartSlider label="start time (this edit)" file={opts.beat_times_file || beatsFile} audio={opts.audio || music.audio}
+      <label className="field" title="the stages before it play in full with only their own sound; the song comes in where this stage starts"><span>music starts at</span>
+        <select value={opts.music_from_stage ?? ""} onChange={setO("music_from_stage")}><option value="">the first stage</option>{stages.slice(1).map((id) => <option key={id} value={id}>#{id}</option>)}</select>
+      </label>
+      <StartSlider label="from (s into the song)" file={opts.beat_times_file || beatsFile} audio={opts.audio || music.audio}
         value={opts.start_time ? Number(opts.start_time) : fit?.start_time} onCommit={(s) => setOpts({ ...opts, start_time: String(s) })} />
       {opts.start_time && <button className="btn sm" title="back to the track's start time from Settings" onClick={resetStart}>reset</button>}
     </div>
     <div className="row wrap">
+      {num("music_volume", "music ×", "1.0")}{num("duck", "duck (0–1)", "0")}
+      <label className="chk inline" title="the music sounds like it plays from a speaker in the room: thinner, narrower, a little echo and well under the clips' sound (music × still scales it)"><input type="checkbox" checked={!!opts.ambient_music} onChange={(e) => setOpts({ ...opts, ambient_music: e.target.checked ? "1" : "" })} /> ambient music</label>
+      <MixPreview trackUrl={`/api/audio/track?beat_times_file=${encodeURIComponent(opts.beat_times_file || beatsFile)}&audio=${encodeURIComponent(opts.audio || music.audio || "")}`}
+        start={opts.start_time ? Number(opts.start_time) : fit?.start_time ?? 0} clipUrl={voiceClip?.url} clipTrim={voiceClip?.trim ?? 0}
+        musicVolume={Number(opts.music_volume || 1)} clipVolume={Number(opts.clip_volume || 1)} ambient={!!opts.ambient_music} />
+    </div>
+  </>;
+}
+
+/** Beat-synced cuts (an add-on to the music): punch-in zoom and the cut timing. */
+function SyncControls({ num, zoom, setZoom }: { readonly num: (k: string, label: string, ph: string) => React.ReactNode; readonly zoom: boolean; readonly setZoom: (v: boolean) => void }) {
+  return <>
+    <div className="row wrap">
       <label className="chk inline"><input type="checkbox" checked={zoom} onChange={(e) => setZoom(e.target.checked)} /> punch-in zoom</label>
       {zoom && num("zoom", "zoom ×", "1.5")}
-      {withClips && <label className="chk inline" title="layer each clip's own generated sound (dialogue, breathing, ambience) over the music; plays once at the clip's start, music ducks under it"><input type="checkbox" checked={clipAudio} onChange={(e) => setClipAudio(e.target.checked)} /> clip audio over music</label>}
-      {withClips && clipAudio && <>{num("clip_volume", "voice ×", "1.0")}{num("music_volume", "music ×", "1.0")}{num("duck", "duck (0–1)", "0")}
-        <label className="chk inline" title="the music sounds like it plays from a speaker in the room: thinner, narrower, a little echo and well under the clips' sound (music × still scales it)"><input type="checkbox" checked={!!opts.ambient_music} onChange={(e) => setOpts({ ...opts, ambient_music: e.target.checked ? "1" : "" })} /> ambient music</label>
-        <MixPreview trackUrl={`/api/audio/track?beat_times_file=${encodeURIComponent(opts.beat_times_file || beatsFile)}&audio=${encodeURIComponent(opts.audio || music.audio || "")}`}
-          start={opts.start_time ? Number(opts.start_time) : fit?.start_time ?? 0} clipUrl={voiceClip?.url} clipTrim={voiceClip?.trim ?? 0}
-          musicVolume={Number(opts.music_volume || 1)} clipVolume={Number(opts.clip_volume || 1)} ambient={!!opts.ambient_music} /></>}
     </div>
     <details className="advanced">
       <summary>Cut timing <span className="dim">blank = defaults: lead-in 2s, 2 beats per cut, 2 subcuts per still, last cut ×2, 0.5s fade-out</span></summary>
@@ -348,21 +374,16 @@ function PolaroidControls({ pol, setPol, stills, cfolder, noMusic }: {
   );
 }
 
-/** The Sound & style header: beat-synced or no music, saved to the project (same switch as Settings → Music). */
-function SoundHead({ noMusic, onSwitch }: { readonly noMusic: boolean; readonly onSwitch: (none: boolean) => void }) {
-  return (
-    <div className="cmp-head"><h3>Sound &amp; style</h3>
-      <div className="seg" title="saved to the project (same switch as Settings → Music)">
-        <button className={noMusic ? "" : "on"} onClick={() => { if (noMusic) onSwitch(false); }}>♪ Beat-synced</button>
-        <button className={noMusic ? "on" : ""} onClick={() => { if (!noMusic) onSwitch(true); }}>No music</button>
-      </div>
-      <span className="dim">{noMusic ? "every stage in full, flowing into the next; the clips' own audio is the soundtrack" : "cut to the beats of the project's track"}</span>
-    </div>
-  );
+/** The Sound & style header: what the edit's soundtrack is, in one line. */
+function SoundHead({ musicOn, beatSync, withClips }: { readonly musicOn: boolean; readonly beatSync: boolean; readonly withClips: boolean }) {
+  const base = withClips ? "the clips' own sound" : "silence";
+  const what = !musicOn ? `every stage in full, flowing into the next; ${base} is the soundtrack`
+    : beatSync ? `music over ${base}, cut to its beats` : `every stage in full, music over ${base}`;
+  return <div className="cmp-head"><h3>Sound &amp; style</h3><span className="dim">{what}</span></div>;
 }
 
-function OtherEditNote({ job, noMusic }: { readonly job: Job; readonly noMusic: boolean }) {
-  return <div className="afnote">the {noMusic ? "beat-synced" : "no-music"} edit is {job.status} too — it renders separately and keeps its own file</div>;
+function OtherEditNote({ job, full }: { readonly job: Job; readonly full: boolean }) {
+  return <div className="afnote">the {full ? "beat-synced" : "full-length"} edit is {job.status} too — it renders separately and keeps its own file</div>;
 }
 
 function renderTiming(job: Job | undefined, lastSeconds?: number): string {
@@ -404,7 +425,8 @@ function EditsCard({ folder, list, nOther, showOther, onShowOther, tile, projBus
 }
 
 /** Per-project UI state kept in browser storage: cut-from mode + folders, per-stage kinds, trims and mutes, and the edit settings
- * (track, beats, start time, cut timing, punch-in zoom, clip-audio switch + levels; the output name is per edit). */
+ * (music on/off, beat sync, track, beats, start time and stage, cut timing, punch-in zoom, levels; the output name is per edit).
+ * Music is off until switched on: the clips' own sound is the base, music a layer over it, beat sync an add-on to the music. */
 function useComposePrefs(name: string) {
   const vkey = `composeView:${name}`;
   const savedView = useMemo(() => loadJson<{ mode?: Mode; folder?: string; stillsFrom?: string | null }>(vkey, {}), [vkey]);
@@ -427,10 +449,11 @@ function useComposePrefs(name: string) {
   const akey = `composeAudio:${name}`;  // the edit settings: clip-audio switch, punch-in, and every opts field but the output name
   const savedOpts = useMemo(() => loadJson<Record<string, unknown>>(akey, {}), [akey]);
   const [opts, setOpts] = useState<Record<string, string>>(() => Object.fromEntries(Object.entries(savedOpts).filter(([k, v]) => typeof v === "string" && v !== "" && k !== "out_name")) as Record<string, string>);
-  const [clipAudio, setClipAudio] = useState(!!savedOpts.on);
+  const [musicOn, setMusicOn] = useState(!!savedOpts.music_on);
+  const [beatSync, setBeatSync] = useState(!!savedOpts.beat_sync);
   const [zoom, setZoom] = useState(!!savedOpts.zoom_on);
-  useEffect(() => { const { out_name: _, ...keep } = opts; store(akey, { ...keep, on: clipAudio, zoom_on: zoom }); }, [akey, clipAudio, zoom, opts]);
-  return { folder, setFolder, mode, setMode, stillsFrom, setStillsFrom, kinds, setKind, trims, setTrim, trimsEnd, setTrimEnd, muted, toggleMute, opts, setOpts, clipAudio, setClipAudio, zoom, setZoom };
+  useEffect(() => { const { out_name: _, ...keep } = opts; store(akey, { ...keep, music_on: musicOn, beat_sync: beatSync, zoom_on: zoom }); }, [akey, musicOn, beatSync, zoom, opts]);
+  return { folder, setFolder, mode, setMode, stillsFrom, setStillsFrom, kinds, setKind, trims, setTrim, trimsEnd, setTrimEnd, muted, toggleMute, opts, setOpts, musicOn, setMusicOn, beatSync, setBeatSync, zoom, setZoom };
 }
 
 /** The timeline: the stages in project order (the Board's ⠿ order), synced both ways — a drag here reorders the project's
@@ -463,7 +486,7 @@ export default function Compose({ name }: { readonly name: string }) {
   const audio = useQuery({ queryKey: ["audio"], queryFn: () => api<Audio>("/audio") }).data;
   const run = useRun(name);
   const jobs = useJobs().data ?? [];
-  const { folder, setFolder, mode, setMode, stillsFrom, setStillsFrom, kinds, setKind, trims, setTrim, trimsEnd, setTrimEnd, muted, toggleMute, opts, setOpts, clipAudio, setClipAudio, zoom, setZoom } = useComposePrefs(name);
+  const { folder, setFolder, mode, setMode, stillsFrom, setStillsFrom, kinds, setKind, trims, setTrim, trimsEnd, setTrimEnd, muted, toggleMute, opts, setOpts, musicOn, setMusicOn, beatSync, setBeatSync, zoom, setZoom } = useComposePrefs(name);
   const [seen, setSeen] = useState<SeenEdits>(() => loadSeenEdits(name));
   useEffect(() => { setSeen(loadSeenEdits(name)); }, [name]);
   const markSeen = (file: string, mtime: number) => setSeen((prev) => {
@@ -479,8 +502,7 @@ export default function Compose({ name }: { readonly name: string }) {
   const [drag, setDrag] = useState<number | null>(null);
   const p = proj.data;
   const music = (p?.config.music ?? {}) as Music;
-  const noMusic = !!music.none;  // scenario edit: no beats, every stage in full with transitions (Settings → Music)
-  const saveMusic = useSaveMusic(name);
+  const synced = musicOn && beatSync;  // else every stage plays in full with transitions (Settings → Music)
   const defaultBeats = useDefaultBeats();
   const beatsFile = opts.beat_times_file || music.beat_times_file || defaultBeats;
   const fit = useQuery({ queryKey: ["durations", beatsFile], queryFn: () => api<Fit>(`/durations?beat_times_file=${encodeURIComponent(beatsFile)}`) }).data;
@@ -517,9 +539,9 @@ export default function Compose({ name }: { readonly name: string }) {
   );
   const projBusy = jobs.some((j) => j.project === name && isActive(j));
   const cleanup = () => cleanupProject(name, () => void qc.invalidateQueries({ queryKey: ["project", name] })).then((m) => { if (m) setMsg(m); });
-  // a beat-synced and a no-music edit are separate jobs (and files): each can render while the other does
-  const kind = noMusic ? "nomusic" : "beat";
-  const [editJob, otherJob] = editJobsOf(jobs, name, noMusic);
+  // a beat-synced and a full-length edit are separate jobs (and files): each can render while the other does
+  const kind = synced ? "beat" : "nomusic";
+  const [editJob, otherJob] = editJobsOf(jobs, name, !synced);
   const editing = !!editJob;
   const last = useQuery({ queryKey: ["edit-timing", kind, editing], queryFn: () => api<{ seconds?: number }>(`/edit-timing?kind=${kind}`) }).data;  // refetched when a render starts/ends
   const [tick, setTick] = useState(Date.now());
@@ -545,7 +567,7 @@ export default function Compose({ name }: { readonly name: string }) {
   const firstVoiced = items.find((i) => isClip(i.id) && !muted.includes(i.id) && fs?.clips?.[i.id]);
   const voiceClip = firstVoiced && { url: fileUrl(name, folder, "clip", firstVoiced.id, fs!.clips[firstVoiced.id]), trim: Number(trims[firstVoiced.id] || TRIM_START) };
   const render = () => {
-    run.mutate(editRequest({ folder, mode, items, isClip, sfolder, zoom, noMusic, clipAudio, trims, trimsEnd, muted, music, opts, pol, cfolder }), {
+    run.mutate(editRequest({ folder, mode, items, isClip, sfolder, zoom, musicOn, beatSync, trims, trimsEnd, muted, music, opts, pol, cfolder }), {
       onSuccess: () => { const t = setInterval(() => qc.invalidateQueries({ queryKey: ["project", name] }), 3000); setTimeout(() => clearInterval(t), 600000); },
       onError: (e) => setMsg(`error: ${e.message}`),
     });
@@ -571,7 +593,7 @@ export default function Compose({ name }: { readonly name: string }) {
         <div className="strip">
           {items.map((it, i) => (
             <Chip key={it.key} it={it} i={i} dragging={drag === i} clip={isClip(it.id)} thumb={thumb(it.id)} canSwitch={canSwitch(it.id)}
-              audible={isClip(it.id) && (clipAudio || noMusic)} muted={muted.includes(it.id)} trim={trims[it.id] ?? ""} trimEnd={trimsEnd[it.id] ?? ""}
+              audible={isClip(it.id)} muted={muted.includes(it.id)} trim={trims[it.id] ?? ""} trimEnd={trimsEnd[it.id] ?? ""}
               onDragStart={() => setDrag(i)} onDrop={() => reorder(i)} onDrop_={() => commit(items.filter((x) => x.key !== it.key))}
               onSwitch={() => setKind(it.id, isClip(it.id) ? "still" : "clip")} onMute={() => toggleMute(it.id)} onTrim={(v) => setTrim(it.id, v)} onTrimEnd={(v) => setTrimEnd(it.id, v)} />
           ))}
@@ -583,9 +605,14 @@ export default function Compose({ name }: { readonly name: string }) {
       </section>
 
       <section className="card cmp-card">
-        <SoundHead noMusic={noMusic} onSwitch={(none) => void saveMusic({ none: none || undefined })} />
-        {noMusic ? <ScenarioControls name={name} /> : <BeatControls music={music} audio={audio} opts={opts} setOpts={setOpts} setO={setO} num={num} beatsFile={beatsFile} fit={fit} mode={mode} zoom={zoom} setZoom={setZoom} clipAudio={clipAudio} setClipAudio={setClipAudio} voiceClip={voiceClip} />}
-        <PolaroidControls pol={pol} setPol={setPolSaved} stills={collageStills} cfolder={cfolder} noMusic={noMusic} />
+        <SoundHead musicOn={musicOn} beatSync={beatSync} withClips={mode !== "stills"} />
+        {mode !== "stills" && <div className="row wrap">{num("clip_volume", "clip sound ×", "1.0")}<span className="dim">each clip's own sound plays under everything; 🔊 on a chip mutes it</span></div>}
+        {!synced && <ScenarioControls name={name} />}
+        <label className="chk" title="lay a track over the clips' sound; off = the clips' sound alone"><input type="checkbox" checked={musicOn} onChange={(e) => setMusicOn(e.target.checked)} /> ♪ music over the clips' sound</label>
+        {musicOn && <MusicControls music={music} audio={audio} opts={opts} setOpts={setOpts} setO={setO} num={num} beatsFile={beatsFile} fit={fit} stages={[...new Set(items.map((i) => i.id))]} voiceClip={voiceClip} />}
+        {musicOn && <label className="chk" title="cut the stages from the music's start on to its beats (punch cuts, Ken-Burns crops); off = every stage plays in full"><input type="checkbox" checked={beatSync} onChange={(e) => setBeatSync(e.target.checked)} /> beat-sync cuts</label>}
+        {synced && <SyncControls num={num} zoom={zoom} setZoom={setZoom} />}
+        <PolaroidControls pol={pol} setPol={setPolSaved} stills={collageStills} cfolder={cfolder} noMusic={!synced} />
       </section>
 
       <section className="card cmp-card cmp-render">
@@ -595,7 +622,7 @@ export default function Compose({ name }: { readonly name: string }) {
           <span className="dim">{renderTiming(editJob, last?.seconds)}</span>
         </div>
         {editJob?.progress && <div className="jbar" title="estimated from the last render"><i style={{ width: `${editJob.progress.fraction * 100}%` }} /></div>}
-        {otherJob && <OtherEditNote job={otherJob} noMusic={noMusic} />}
+        {otherJob && <OtherEditNote job={otherJob} full={!synced} />}
         {unapproved.length > 0 && <div className="afnote warn">not approved yet: {unapproved.map(unapprovedLabel).join(", ")} — ✓ them on the Board or drop them</div>}
         {msg && <button type="button" className="msg" onClick={() => setMsg("")}>{msg}</button>}
       </section>

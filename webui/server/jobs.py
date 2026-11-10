@@ -51,8 +51,8 @@ def send_pushover(title, message):
 
 
 def edit_kind(req):
-    """'nomusic' for a no-music (scenario) edit, else 'beat'."""
-    return "nomusic" if req.get("no_music") else "beat"
+    """'nomusic' for a full-length (scenario) edit -- no music, or music without beat sync -- else 'beat'."""
+    return "nomusic" if req.get("no_music") or req.get("beat_sync") is False else "beat"
 
 
 def _timings():
@@ -354,12 +354,18 @@ class Manager:
 
     @staticmethod
     def _audio_flags(req, flags: list) -> list:
-        """The clip-audio flags: --no-music (a scenario edit) or --clip-audio, each with its mutes."""
-        if not req.get("no_music") and not (req.get("clip_audio") and req.get("mode") != "stills"):
-            return flags
+        """The sound flags. The clips' own sound is the base; the music a layer over it from music_from_stage on:
+        no_music = full-length stages, their sound only (--no-music); beat_sync False = the same layout with the track over it
+        (--no-sync); else the beat-cut edit with the clips' sound under the music (--clip-audio; a stills edit has none)."""
+        mutes = Manager._mute_flags(req)
         if req.get("no_music"):
-            return flags + ["--no-music"] + Manager._mute_flags(req)
-        return flags + ["--clip-audio"] + (["--ambient-music"] if req.get("ambient_music") else []) + Manager._mute_flags(req)
+            return flags + ["--no-music"] + mutes
+        music = (["--ambient-music"] if req.get("ambient_music") else []) + \
+                (["--music-from-stage", str(int(req["music_from_stage"]))] if req.get("music_from_stage") not in (None, "") else [])
+        if req.get("beat_sync") is False:
+            return flags + ["--no-sync"] + music + mutes
+        clip = ["--clip-audio"] + mutes if req.get("clip_audio", True) and req.get("mode") != "stills" else []
+        return flags + music + clip
 
     @staticmethod
     def edit_args(d, project, req, folder, stages):
@@ -378,7 +384,7 @@ class Manager:
 
     @staticmethod
     def _name_flag(project, req):
-        name = req.get("out_name") or f"{project}_{'nomusic' if req.get('no_music') else 'edit'}_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
+        name = req.get("out_name") or f"{project}_{'nomusic' if req.get('no_music') else 'edit' if req.get('beat_sync', True) else 'music'}_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
         name = Path(name).name
         if not name.endswith(".mp4"):
             name += ".mp4"

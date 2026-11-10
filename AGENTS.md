@@ -92,8 +92,9 @@ for a web-UI ref `@<project>#<id>`).
   reached, so a batch shares one pod start (`Manager.animate_batch` in `webui/server/jobs.py`).
 - **`animate` spends credits for every missing clip it finds** — never use it as a dry check, and never start one while another
   is in flight. `duration` is free-form (1–8 s, snapped to the 24 fps frame grid).
-- **No music** (`music.none` in project.json): `edit` becomes a scenario cut (`--no-music`): every stage in full, joined by an
-  xfade `transition`, over the clips' own audio.
+- **Sound** (Compose): the clips' own audio is the base; music is an optional layer (off by default), beat sync an add-on to it.
+  No music = scenario cut (`--no-music`): every stage in full, joined by an xfade `transition`; music without sync = the same
+  layout with the track over it (`--no-sync`); `--music-from-stage ID` brings the music in at that stage.
 - `edit` (`video/make_edit.py`) is **frame-exact** (cumulative integer frame counts). After changing it, verify the total frame
   count and PSNR-compare against a previous edit.
 

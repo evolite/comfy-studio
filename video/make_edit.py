@@ -29,11 +29,15 @@ start time (where in the song the video starts), and audio/<Song>.mp3 beside it 
 --start-time/--audio override. The music plays from the start time under the --lead-in-seconds hold
 on stage 1; the cuts start on the first beat at or after start + lead-in.
 
---clip-audio layers the clips' own generated audio (dialogue, breathing, ambience) over the music: each clip's
+--clip-audio layers the clips' own generated audio (dialogue, breathing, ambience) under the music: each clip's
 sound plays once at its stage's start (trimmed like the picture, atempo'd with a retimed one-cut stage),
-the music ducks under it (--duck, --music-volume, --clip-volume, --mute-clip-audio IDs). Video is unchanged.
---ambient-music (with --clip-audio) makes the music sound like it plays from a speaker in the room: small-speaker band,
+the music can duck under it (--duck, --music-volume, --clip-volume, --mute-clip-audio IDs). Video is unchanged.
+The web UI's Compose always passes it: the clips' sound is the base, the music a layer over it.
+--ambient-music makes the music sound like it plays from a speaker in the room: small-speaker band,
 narrower stereo, a little room echo and about 12 dB quieter, so the clips' own sound sits in front of it.
+--music-from-stage ID starts the music at that stage: the stages before it play in full (a no-music layout, hard cuts,
+their own sound only), the song comes in where it starts (from the start time) and the beat cuts begin there, with that
+stage as the lead-in hold.
 
 --as-still IDs mixes the two: those stages show their still (Ken-Burns crops, --subcuts-per-image of them), every other stage
 its clip; --stills-from DIR takes the stills from another folder (interp/ has clips only). The edit stays at 48 fps when every
@@ -46,6 +50,8 @@ No music (--no-music, "scenario" edit): no beats, no punch cuts. Every stage pla
 its trim, a still for --still-seconds with a slow drift) and flows into the next through an ffmpeg xfade --transition
 (fade, fadeblack, dissolve, ...; "cut" = hard cuts) lasting --transition-seconds. The soundtrack is the clips' own audio,
 crossfaded with the picture (--mute-clip-audio drops a stage's); --fade-in / --fade-out fade picture and sound from/to black.
+--no-sync is the same full-length layout with the track (--beat-times-file / --audio / --start-time) laid over the clips'
+sound from --music-from-stage on (default: the first stage), at --music-volume, ducking with --duck, --ambient-music.
 
 Polaroids (video/polaroid.py): --polaroid shows every still as an Instax-style card (film grade, paper frame, handwritten
 caption) dropped onto a blurred, darkened copy of itself, one cut per still. --collage IDS ends the edit on those stages' cards
@@ -154,7 +160,8 @@ class EditOptions:
     collage_beats: int = 2        # beats between collage landings (beat-synced edit)
     card_sounds: bool = False     # a sound from config.POLAROID_SFX_DIR on every card landing
     card_sound_volume: float = 0.8
-    ambient_music: bool = False   # with clip_audio: the music plays as if from a speaker in the room (AMBIENT_MUSIC)
+    ambient_music: bool = False   # the music plays as if from a speaker in the room (AMBIENT_MUSIC)
+    music_from_stage: int | None = None  # the music starts at this stage; the stages before it play in full, unsynced
 
 
 def durations_to_frame_counts(durations):
@@ -462,8 +469,12 @@ def voice_segments(cuts, muted=()):
     return segs
 
 
-def mux(clip_paths, build_dir, audio, audio_start, total_dur, out_path, voices=(), clip_volume=1.0, music_f="", duck=0.0, fade_out=FADE_OUT):
-    """Picture + music (through the filter chain music_f, e.g. a volume or AMBIENT_MUSIC) + the voices over it."""
+def mux(clip_paths, build_dir, audio, audio_start, total_dur, out_path, voices=(), clip_volume=1.0, music_f="", duck=0.0, fade_out=FADE_OUT,
+        music_delay=0.0):
+    """Picture + music (through the filter chain music_f, e.g. a volume or AMBIENT_MUSIC; it comes in music_delay s into
+    the edit) + the voices under it."""
+    if music_delay > 0:
+        music_f = ",".join(f for f in (music_f, f"adelay={round(music_delay * 1000)}:all=1,apad") if f)
     fade = min(max(0.0, fade_out), total_dur)
     fade_f = f"afade=t=out:st={total_dur - fade:.3f}:d={fade:.3f}" if fade > 0 else ""  # applied to the final mix
     concat_list = build_dir / "concat_list.txt"
@@ -475,7 +486,7 @@ def mux(clip_paths, build_dir, audio, audio_start, total_dur, out_path, voices=(
         af = ",".join(f for f in (music_f, fade_f) if f)
         subprocess.run(["ffmpeg", "-y", "-i", str(silent), "-ss", str(audio_start), "-i", str(audio),
                         "-map", "0:v", "-map", "1:a", "-t", str(total_dur), "-c:v", "copy", *(["-af", af] if af else []),
-                        "-c:a", "aac", "-b:a", "192k", "-shortest", str(out_path), "-loglevel", "error"], check=True)
+                        "-c:a", "aac", "-b:a", "192k", *([] if music_delay > 0 else ["-shortest"]), str(out_path), "-loglevel", "error"], check=True)
         return
     # inputs: 0 = picture, 1 = music, 2.. = one per voiced appearance
     inputs = ["-i", str(silent), "-ss", str(audio_start), "-i", str(audio)]
@@ -716,16 +727,31 @@ def _render_cuts(cuts, build_dir, zoom) -> list:
         return list(pool.map(render, enumerate(cuts)))  # map keeps cut order for the concat
 
 
-def _mux_and_sounds(cuts, clip_paths, build_dir, audio, audio_start, total_frames, out_path, collage, opts):
+def music_filter(opts) -> str:
+    """The music's own chain: the ambient speaker sound and its level."""
+    return ",".join(([AMBIENT_MUSIC] if opts.ambient_music else []) + ([f"volume={opts.music_volume}"] if opts.music_volume != 1 else []))
+
+
+def stage_index(clips, stage_id) -> int:
+    """Position of stage stage_id's first appearance in the play order (0 when it isn't in it or none was asked for)."""
+    if stage_id is None:
+        return 0
+    i = next((i for i, c in enumerate(clips) if c.stem == f"stage_{stage_id}"), None)
+    if i is None:
+        print(f"  music start: stage {stage_id} isn't in the edit, the music starts with the first stage", flush=True)
+        return 0
+    return i
+
+
+def _mux_and_sounds(cuts, clip_paths, build_dir, audio, audio_start, total_frames, out_path, collage, opts, music_delay=0.0):
     """Lay the music (and the clips' own audio) under the picture, then the card sounds."""
     voices = voice_segments(cuts, set(opts.mute_clip_audio)) if opts.clip_audio else []
-    music_f = ""
-    if opts.clip_audio:  # the music level / ambience apply even when no clip turned out to carry sound
-        music_f = ",".join(([AMBIENT_MUSIC] if opts.ambient_music else []) + ([f"volume={opts.music_volume}"] if opts.music_volume != 1 else []))
+    music_f = music_filter(opts)
+    if opts.clip_audio:
         print(f"  clip audio: {len(voices)} of {len({c.seg for c in cuts})} clips carry sound (music x{opts.music_volume}"
               f"{', ambient' if opts.ambient_music else ''}, voice x{opts.clip_volume}, duck {opts.duck})", flush=True)
     mux(clip_paths, build_dir, audio, audio_start, total_frames / FPS, out_path, voices, opts.clip_volume, music_f,
-        opts.duck, opts.fade_out)
+        opts.duck, opts.fade_out, music_delay)
     if not opts.card_sounds:
         return
     if collage:
@@ -747,6 +773,11 @@ def make_edit(pipeline_dir, out_name=None, audio=None, beat_times_file=DEFAULT_B
     if len(clips) < 2:
         raise FileNotFoundError(f"Need at least 2 stages (clips or stills) in {pipeline_dir}")
     FPS = edit_fps(clips)
+    p = stage_index(clips, opts.music_from_stage)
+    prefix, clips = scenario_cuts(clips[:p], STILL_SECONDS, 0)[0] if p else [], clips[p:]
+    if len(clips) < 2:
+        raise ValueError("the music has to start at least two stages before the end of the edit")
+    prefix_frames = sum(c.frames for c in prefix)
     collage_files = collage_stills(pipeline_dir, opts) if opts.collage else []
     if opts.card_sounds:
         card_sound_files()  # fail before rendering, not after
@@ -771,8 +802,11 @@ def make_edit(pipeline_dir, out_name=None, audio=None, beat_times_file=DEFAULT_B
     cuts = plan_cuts(clips, lead_in, durations, subcut_counts, punch_in=zoom is not None)
     if one_cut:
         _stretch_to_fill(cuts)
+    for c in cuts:
+        c.seg += len(prefix)
+    cuts = prefix + cuts
     total_frames = sum(c.frames for c in cuts)
-    collage = beat_collage(beat_times, audio_start, total_frames, len(collage_files), opts.collage_beats) if collage_files else None
+    collage = beat_collage(beat_times, audio_start, total_frames - prefix_frames, len(collage_files), opts.collage_beats) if collage_files else None
     if collage:
         total_frames += collage[0]
         print(f"  collage outro: {len(collage_files)} cards, one every {opts.collage_beats} beats, {collage[0]} frames", flush=True)
@@ -780,6 +814,7 @@ def make_edit(pipeline_dir, out_name=None, audio=None, beat_times_file=DEFAULT_B
     print(f"{pipeline_dir.name}: {len(clips)} stages (first = lead-in), crops {subcut_counts} x {cut_beats} beats = "
           f"{n_cuts} cuts (last={cuts[-1].frames} frames), lead-in {lead_in:.2f}s, "
           f"punch-in {f'{zoom}x' if zoom else 'off'}, music from {audio_start:.2f}s, first cut at {punch_start:.2f}s, "
+          f"{f'{len(prefix)} stages in full before the music ({prefix_frames / FPS:.2f}s), ' if prefix else ''}"
           f"total {total_frames} frames / {total_frames / FPS:.3f}s at {FPS} fps", flush=True)
 
     build_dir = pipeline_dir / "_debug" / "edit_build_beatsync"
@@ -791,7 +826,7 @@ def make_edit(pipeline_dir, out_name=None, audio=None, beat_times_file=DEFAULT_B
 
     out_path = _out_path(pipeline_dir, out_name)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    _mux_and_sounds(cuts, clip_paths, build_dir, audio, audio_start, total_frames, out_path, collage, opts)
+    _mux_and_sounds(cuts, clip_paths, build_dir, audio, audio_start, total_frames, out_path, collage, opts, prefix_frames / FPS)
     print(f"  -> {out_path}")
     return out_path
 
@@ -831,7 +866,22 @@ def _scenario_input(k, c, cut_paths, lens, fmt, muted, clip_volume, chains) -> l
     return ins
 
 
-def _fade_chains(total, fade_in, fade_out, chains) -> None:
+def _music_chains(k, music, starts, total, chains) -> list:
+    """Lay the track (input k) over the clips' joined sound [aj] -> [ajm]; returns its ffmpeg -i arguments.
+    music = (audio, start_time in the song, music_filter, duck, cut index it comes in at)."""
+    audio, song_start, music_f, duck, at = music
+    delay = round(starts[at] * 1000)
+    chains.append(f"[{k}:a]{AFMT}{',' + music_f if music_f else ''},adelay={delay}:all=1,apad,atrim=duration={total:.4f}[mus]")
+    if duck > 0:
+        chains.append("[aj]asplit=2[akey][amix]")
+        chains.append(f"[mus][akey]sidechaincompress=threshold=0.02:ratio={2 + 10 * duck:.2f}:attack=20:release=350[mducked]")
+        chains.append("[mducked][amix]amix=inputs=2:normalize=0:duration=longest[ajm]")
+    else:
+        chains.append("[mus][aj]amix=inputs=2:normalize=0:duration=longest[ajm]")
+    return ["-ss", f"{song_start:.4f}", "-i", str(audio)]
+
+
+def _fade_chains(total, fade_in, fade_out, chains, alabel="aj") -> None:
     """The final fade in/out on both picture and sound."""
     vf, af = [], []
     fi, fo = min(max(0.0, fade_in), total / 2), min(max(0.0, fade_out), total / 2)
@@ -842,13 +892,14 @@ def _fade_chains(total, fade_in, fade_out, chains) -> None:
         vf.append(f"fade=t=out:st={total - fo:.3f}:d={fo:.3f}")
         af.append(f"afade=t=out:st={total - fo:.3f}:d={fo:.3f}")
     chains.append(f"[vj]{','.join(vf) or 'null'},format=yuv420p[vout]")
-    chains.append(f"[aj]{','.join(af) or 'anull'},alimiter=limit=0.95[aout]")
+    chains.append(f"[{alabel}]{','.join(af) or 'anull'},alimiter=limit=0.95[aout]")
 
 
-def scenario_mux(cut_paths, cuts, t_frames, transition, out_path, muted=(), clip_volume=1.0, fade_in=0.0, fade_out=FADE_OUT):
+def scenario_mux(cut_paths, cuts, t_frames, transition, out_path, muted=(), clip_volume=1.0, fade_in=0.0, fade_out=FADE_OUT,
+                 music=None):
     """Grade the clips and join every cut with xfade (acrossfade for the clips' own audio) in ONE ffmpeg pass, so each frame is
     encoded once; cut_paths = {cut index: pre-rendered file} for the stills (their zoompan drift). Each transition overlaps
-    two cuts by t_frames, so the total is sum(frames) - (n-1) * t_frames."""
+    two cuts by t_frames, so the total is sum(frames) - (n-1) * t_frames. music (see _music_chains) lays a track over it."""
     n = len(cuts)
     lens = [c.frames / FPS for c in cuts]
     total_frames = sum(c.frames for c in cuts) - (n - 1) * t_frames
@@ -867,7 +918,10 @@ def scenario_mux(cut_paths, cuts, t_frames, transition, out_path, muted=(), clip
             v, a, end = f"x{k}", f"y{k}", end - d + lens[k]
         chains.append(f"[{v}]null[vj]")
         chains.append(f"[{a}]anull[aj]")
-    _fade_chains(total, fade_in, fade_out, chains)
+    if music:
+        starts = [sum(lens[:k]) - k * d for k in range(n)]
+        inputs += _music_chains(n, music, starts, total, chains)
+    _fade_chains(total, fade_in, fade_out, chains, "ajm" if music else "aj")
 
     subprocess.run(["ffmpeg", "-y", *inputs, "-filter_complex", ";".join(chains), "-map", "[vout]", "-map", AOUT,
                     "-frames:v", str(total_frames), "-t", f"{total:.4f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
@@ -876,8 +930,9 @@ def scenario_mux(cut_paths, cuts, t_frames, transition, out_path, muted=(), clip
 
 
 def make_scenario(pipeline_dir, out_name=None, stills=False, order=None, transition="fade", transition_seconds=0.6,
-                  still_seconds=STILL_SECONDS, fade_in=0.0, opts: EditOptions = None) -> Path:
-    """No-music edit: every stage in full, joined by transitions, over the clips' own audio (see the module docstring)."""
+                  still_seconds=STILL_SECONDS, fade_in=0.0, opts: EditOptions = None, music=None) -> Path:
+    """No-music edit: every stage in full, joined by transitions, over the clips' own audio (see the module docstring).
+    music = (beat_times_file, start_time, audio) lays that track over it from opts.music_from_stage on, unsynced."""
     global FPS
     opts = opts or EditOptions()
     if transition not in TRANSITIONS:
@@ -902,7 +957,13 @@ def make_scenario(pipeline_dir, out_name=None, stills=False, order=None, transit
         land_at = [t_frames + round(k * COLLAGE_EVERY * FPS) for k in range(len(collage_files))]
         cuts.append(Cut(Path("_collage"), land_at[-1] + round(COLLAGE_HOLD * FPS), flare=False, seg=len(cuts)))
     total_frames = sum(c.frames for c in cuts) - (len(cuts) - 1) * t_frames
-    print(f"{pipeline_dir.name}: {len(clips)} stages, no music, transition {transition} {t_frames / FPS:.2f}s, "
+    track = None
+    if music:
+        _, song_start, audio = _load_music(*music)
+        at = stage_index(clips, opts.music_from_stage)
+        track = (audio, song_start, music_filter(opts), opts.duck, at)
+    print(f"{pipeline_dir.name}: {len(clips)} stages, "
+          f"{f'music {audio.name} from {song_start:.2f}s at stage {clips[at].stem}' if track else 'no music'}, transition {transition} {t_frames / FPS:.2f}s, "
           f"fade in {fade_in}s / out {opts.fade_out}s, total {total_frames} frames / {total_frames / FPS:.3f}s at {FPS} fps", flush=True)
 
     build_dir = pipeline_dir / "_debug" / "edit_build_scenario"
@@ -920,7 +981,8 @@ def make_scenario(pipeline_dir, out_name=None, stills=False, order=None, transit
 
     out_path = _out_path(pipeline_dir, out_name)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    scenario_mux(paths, cuts, t_frames, transition, out_path, set(opts.mute_clip_audio), opts.clip_volume, fade_in, opts.fade_out)
+    scenario_mux(paths, cuts, t_frames, transition, out_path, set(opts.mute_clip_audio), opts.clip_volume, fade_in, opts.fade_out,
+                 track)
     times = card_times(cuts, t_frames, land_at) if opts.card_sounds else []
     if times:
         add_card_sounds(out_path, times, opts.card_sound_volume, seed=len(times))
@@ -955,16 +1017,20 @@ def main():
     ap.add_argument("--clip-audio", action="store_true",
                     help="Layer the clips' own generated audio (dialogue, breathing, ambience) over the music: each clip's sound plays once at its stage's start")
     ap.add_argument("--clip-volume", type=float, default=1.0, help="Level of the clip-audio layer")
-    ap.add_argument("--music-volume", type=float, default=1.0, help="Level of the music (with --clip-audio)")
-    ap.add_argument("--duck", type=float, default=0.0, help="How hard the music ducks under the clip audio, 0 = off (with --clip-audio)")
+    ap.add_argument("--music-volume", type=float, default=1.0, help="Level of the music")
+    ap.add_argument("--duck", type=float, default=0.0, help="How hard the music ducks under the clip audio, 0 = off")
     ap.add_argument("--ambient-music", action="store_true",
-                    help="Music as if from a speaker in the room: thin, narrow, a little echo, well under the clip audio (with --clip-audio)")
+                    help="Music as if from a speaker in the room: thin, narrow, a little echo, well under the clip audio")
+    ap.add_argument("--music-from-stage", type=int, default=None, metavar="ID",
+                    help="The music starts at this stage; the stages before it play in full with their own sound only")
     ap.add_argument("--fade-out", type=float, default=FADE_OUT, help=f"Seconds the audio fades out over at the end (default {FADE_OUT}; 0 = hard stop)")
     ap.add_argument("--as-still", type=int, nargs="+", default=[], metavar="ID",
                     help="Mix: these stages show their stage_N.png still (cut like --stills), the rest their clip")
     ap.add_argument("--stills-from", type=Path, default=None, help="Folder the --as-still stills come from (default pipeline_dir)")
     ap.add_argument("--no-music", action="store_true",
                     help="Scenario edit: no beats; every stage in full, joined by --transition, over the clips' own audio")
+    ap.add_argument("--no-sync", action="store_true",
+                    help="Music without beat cuts: the --no-music layout (every stage in full) with the track laid over the clips' sound")
     ap.add_argument("--transition", default="fade", choices=TRANSITIONS, help="No-music edit: xfade transition between stages (cut = hard cuts)")
     ap.add_argument("--transition-seconds", type=float, default=0.6, help="No-music edit: length of each transition")
     ap.add_argument("--still-seconds", type=float, default=STILL_SECONDS, help="No-music edit: how long a still holds")
@@ -982,10 +1048,12 @@ def main():
     trims_end = {int(k): float(v) for k, v in (t.split("=") for t in a.trim_end)}
     opts = EditOptions(trims, trims_end, a.clip_audio, a.clip_volume, a.music_volume, a.duck, tuple(a.mute_clip_audio),
                        a.fade_out, tuple(a.as_still), a.stills_from, a.polaroid, tuple(a.collage), a.collage_from, a.card_size,
-                       a.collage_beats, a.card_sounds, a.card_sound_volume, ambient_music=a.ambient_music)
-    if a.no_music:
+                       a.collage_beats, a.card_sounds, a.card_sound_volume, ambient_music=a.ambient_music,
+                       music_from_stage=a.music_from_stage)
+    if a.no_music or a.no_sync:
+        music = (a.beat_times_file, a.start_time, a.audio) if a.no_sync and not a.no_music else None
         make_scenario(a.pipeline_dir, a.out_name, a.stills, a.order, a.transition, a.transition_seconds, a.still_seconds,
-                      a.fade_in, opts)
+                      a.fade_in, opts, music)
         return
     make_edit(a.pipeline_dir, a.out_name, a.audio, a.beat_times_file, a.start_time, a.lead_in_seconds,
                 a.subcuts_per_image, a.beats_per_cut, a.last_weight, a.zoom, a.stills, a.order, opts)
