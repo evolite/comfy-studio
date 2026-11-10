@@ -211,7 +211,14 @@ def ensure_up(log=print) -> str:
             terminate(pod["id"])
             raise PodError(f"pod {pod['id']}'s ComfyUI did not answer at {server} within {READY_TIMEOUT // 60} min, so it was deleted "
                            f"-- run again for a fresh pod")
-        if (_api(f"/pods/{pod['id']}") or {}).get("desiredStatus") != "RUNNING":
+        try:
+            desired = (_api(f"/pods/{pod['id']}") or {}).get("desiredStatus")
+        except PodError as e:  # find() can still list a pod its watchdog is deleting: that one is gone, so start a new one
+            if created or ": 404 " not in str(e):
+                raise
+            log(f"pod {pod['id']} is gone (its watchdog deleted it), starting a new one")
+            return ensure_up(log)
+        if desired != "RUNNING":
             raise PodError(f"pod {pod['id']} stopped while booting -- see the RunPod console")
         if time.time() - said > 60:
             log(f"  still booting ({time.time() - boot:.0f}s)")
