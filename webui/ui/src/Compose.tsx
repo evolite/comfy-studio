@@ -154,8 +154,8 @@ function polaroidFields(a: EditReqArgs): Record<string, unknown> {
 }
 
 const STRING_OPTS = new Set(["audio", "beat_times_file", "out_name"]);
-const MUSIC_OPTS = ["audio", "beat_times_file", "start_time", "music_volume", "duck", "music_from_stage"];  // the music layer's fields
-const SYNC_OPTS = ["lead_in_seconds", "beats_per_cut", "subcuts_per_image", "last_weight", "zoom"];  // only a beat-synced edit takes these
+const MUSIC_OPTS = new Set(["audio", "beat_times_file", "start_time", "music_volume", "duck", "music_from_stage"]);  // the music layer's fields
+const SYNC_OPTS = new Set(["lead_in_seconds", "beats_per_cut", "subcuts_per_image", "last_weight", "zoom"]);  // only a beat-synced edit takes these
 const BOOL_OPTS = new Set(["ambient_music"]);
 
 /** The full-length layout's fields (every stage in full, flowing into the next): the Settings → Music scenario settings. */
@@ -170,11 +170,17 @@ function optFields(a: EditReqArgs) {
   const req: Record<string, unknown> = {};
   for (const [k, v] of Object.entries({ audio: a.music.audio, beat_times_file: a.music.beat_times_file, ...a.opts })) {
     if (v === "" || v == null) continue;
-    if ((MUSIC_OPTS.includes(k) || BOOL_OPTS.has(k)) && !a.musicOn) continue;
-    if ((SYNC_OPTS.includes(k) || k === "fade_out") && !(a.musicOn && a.beatSync)) continue;  // the full-length layout fades by Settings → Music
-    req[k] = BOOL_OPTS.has(k) ? true : STRING_OPTS.has(k) ? v : Number(v);
+    if ((MUSIC_OPTS.has(k) || BOOL_OPTS.has(k)) && !a.musicOn) continue;
+    if ((SYNC_OPTS.has(k) || k === "fade_out") && !(a.musicOn && a.beatSync)) continue;  // the full-length layout fades by Settings → Music
+    req[k] = optValue(k, v);
   }
   return req;
+}
+
+/** An opts field as the API takes it: a flag, a string, else a number. */
+function optValue(k: string, v: unknown): unknown {
+  if (BOOL_OPTS.has(k)) return true;
+  return STRING_OPTS.has(k) ? v : Number(v);
 }
 
 /** The sound fields: the clips' own sound is always the base (mutes per chip); the music an optional layer over it, beat-synced
@@ -268,16 +274,21 @@ function Chip({ it, i, dragging, clip, thumb, canSwitch, audible, muted, trim, t
   );
 }
 
+/** An edit's kind from its file name (jobs.py _name_flag: _nomusic_ / _music_ (unsynced) / _edit_). */
+function editTag(file: string): string {
+  if (/_nomusic_/.test(file)) return "no music";
+  return /_music_/.test(file) ? "music" : "beat";
+}
+
 /** One finished edit: hover plays it, a click opens the viewer. */
 function EditTile({ project, e, isNew, onOpen, onDelete }: { readonly project: string; readonly e: EditFile; readonly isNew: boolean; readonly onOpen: () => void; readonly onDelete: () => void }) {
-  const noMusic = /_nomusic_/.test(e.name);
-  const tag = noMusic ? "no music" : /_music_/.test(e.name) ? "music" : "beat";  // jobs.py _name_flag: _nomusic_ / _music_ (unsynced) / _edit_
+  const tag = editTag(e.name);
   return (
     <figure className={isNew ? "newitem" : ""}>
       <button type="button" className="mediabtn" onClick={onOpen} aria-label={`play ${baseName(e.name)}`} {...hoverPlay}>
         <video muted preload="metadata" src={`/api/projects/${project}/files/${e.name}?v=${e.mtime}`} />
       </button>
-      <figcaption><span className={`kindtag${noMusic ? " nm" : ""}`}>{tag}</span> {baseName(e.name).replace(`${project}_`, "")} ▶{isNew && <b className="newtag"> · new</b>}<br />{(e.size / 1e6).toFixed(1)} MB · {new Date(e.mtime * 1000).toLocaleString()}</figcaption>
+      <figcaption><span className={`kindtag${tag === "no music" ? " nm" : ""}`}>{tag}</span> {baseName(e.name).replace(`${project}_`, "")} ▶{isNew && <b className="newtag"> · new</b>}<br />{(e.size / 1e6).toFixed(1)} MB · {new Date(e.mtime * 1000).toLocaleString()}</figcaption>
       <button className="btn sm reveal" title="open in folder" onClick={(ev) => { ev.stopPropagation(); void api(`/projects/${project}/reveal`, "POST", { path: e.name }); }}>📂</button>
       <button className="btn sm danger del" onClick={(ev) => { ev.stopPropagation(); onDelete(); }}>✕</button>
     </figure>
@@ -377,8 +388,8 @@ function PolaroidControls({ pol, setPol, stills, cfolder, noMusic }: {
 /** The Sound & style header: what the edit's soundtrack is, in one line. */
 function SoundHead({ musicOn, beatSync, withClips }: { readonly musicOn: boolean; readonly beatSync: boolean; readonly withClips: boolean }) {
   const base = withClips ? "the clips' own sound" : "silence";
-  const what = !musicOn ? `every stage in full, flowing into the next; ${base} is the soundtrack`
-    : beatSync ? `music over ${base}, cut to its beats` : `every stage in full, music over ${base}`;
+  let what = `every stage in full, flowing into the next; ${base} is the soundtrack`;
+  if (musicOn) what = beatSync ? `music over ${base}, cut to its beats` : `every stage in full, music over ${base}`;
   return <div className="cmp-head"><h3>Sound &amp; style</h3><span className="dim">{what}</span></div>;
 }
 
@@ -480,6 +491,22 @@ function useStrip(skey: string, avail: number[], onOrder: (seq: number[]) => voi
   return { items, commit, resetStrip: () => setStrip(null) };
 }
 
+/** The project's running edit of the current kind (and of the other), the last render's timing and the running one's elapsed seconds. */
+function useEditJob(jobs: Job[], name: string, synced: boolean) {
+  const kind = synced ? "beat" : "nomusic";
+  const [editJob, otherJob] = editJobsOf(jobs, name, !synced);
+  const editing = !!editJob;
+  const last = useQuery({ queryKey: ["edit-timing", kind, editing], queryFn: () => api<{ seconds?: number }>(`/edit-timing?kind=${kind}`) }).data;  // refetched when a render starts/ends
+  const [tick, setTick] = useState(Date.now());
+  useEffect(() => {
+    if (!editing) return;
+    const t = setInterval(() => setTick(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [editing]);
+  const elapsed = editJob ? Math.max(0, Math.floor(tick / 1000 - editJob.created)) : 0;
+  return { editJob, otherJob, editing, last, elapsed };
+}
+
 export default function Compose({ name }: { readonly name: string }) {
   const qc = useQueryClient();
   const proj = useProject(name);
@@ -540,17 +567,7 @@ export default function Compose({ name }: { readonly name: string }) {
   const projBusy = jobs.some((j) => j.project === name && isActive(j));
   const cleanup = () => cleanupProject(name, () => void qc.invalidateQueries({ queryKey: ["project", name] })).then((m) => { if (m) setMsg(m); });
   // a beat-synced and a full-length edit are separate jobs (and files): each can render while the other does
-  const kind = synced ? "beat" : "nomusic";
-  const [editJob, otherJob] = editJobsOf(jobs, name, !synced);
-  const editing = !!editJob;
-  const last = useQuery({ queryKey: ["edit-timing", kind, editing], queryFn: () => api<{ seconds?: number }>(`/edit-timing?kind=${kind}`) }).data;  // refetched when a render starts/ends
-  const [tick, setTick] = useState(Date.now());
-  useEffect(() => {
-    if (!editing) return;
-    const t = setInterval(() => setTick(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [editing]);
-  const elapsed = editJob ? Math.max(0, Math.floor(tick / 1000 - editJob.created)) : 0;
+  const { editJob, otherJob, editing, last, elapsed } = useEditJob(jobs, name, synced);
   if (!p) return <div className="page">loading…</div>;
   const isClip = (id: number) => kindOf(id, mode, kinds, !!fs?.clips?.[id], !!sfs?.stills?.[id]) === "clip";
   const thumb = (id: number) => isClip(id) ? fileUrl(name, folder, "clip", id, fs?.clips?.[id] ?? 0) : fileUrl(name, sfolder, "still", id, sfs?.stills?.[id] ?? 0);

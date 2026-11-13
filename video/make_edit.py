@@ -490,27 +490,36 @@ def mux(clip_paths, build_dir, audio, audio_start, total_dur, out_path, voices=(
         return
     # inputs: 0 = picture, 1 = music, 2.. = one per voiced appearance
     inputs = ["-i", str(silent), "-ss", str(audio_start), "-i", str(audio)]
-    fmt = AFMT
-    chains = []
-    for k, (clip, start, edit_len, src_start, src_len, tempo) in enumerate(voices):
-        inputs += ["-i", str(clip)]
-        tempo_f = f",atempo={tempo:.5f}" if abs(tempo - 1) > 1e-3 else ""
-        chains.append(f"[{k + 2}:a]atrim=start={src_start:.4f}:duration={src_len:.4f},asetpts=PTS-STARTPTS{tempo_f},{fmt},"
-                      f"volume={clip_volume},adelay={round(start * 1000)}:all=1[v{k}]")
-    n = len(voices)
-    voice_bus = f"{''.join(f'[v{k}]' for k in range(n))}amix=inputs={n}:normalize=0:duration=longest,apad[voice]" if n > 1 else "[v0]apad[voice]"
-    chains.append(voice_bus)
-    chains.append(f"[1:a]{fmt}{',' + music_f if music_f else ''}[music]")
-    if duck > 0:
-        chains.append("[voice]asplit=2[vkey][vmix]")
-        chains.extend([
-            f"[music][vkey]sidechaincompress=threshold=0.02:ratio={2 + 10 * duck:.2f}:attack=20:release=350[ducked]",
-            f"[ducked][vmix]amix=inputs=2:normalize=0:duration=first,alimiter=limit=0.95{',' + fade_f if fade_f else ''}[aout]",
-        ])
-    else:
-        chains.append(f"[music][voice]amix=inputs=2:normalize=0:duration=first,alimiter=limit=0.95{',' + fade_f if fade_f else ''}[aout]")
+    voice_inputs, chains = _voice_chains(voices, clip_volume)
+    inputs += voice_inputs
+    chains += _music_mix_chains(music_f, fade_f, duck)
     subprocess.run(["ffmpeg", "-y", *inputs, "-filter_complex", ";".join(chains), "-map", "0:v", "-map", AOUT,
                     "-t", str(total_dur), "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", str(out_path), "-loglevel", "error"], check=True)
+
+
+def _voice_chains(voices, clip_volume):
+    """mux: one -i per voiced appearance (inputs 2..) and the filter chains that trim, time-stretch and place each, mixed into [voice]."""
+    inputs, chains = [], []
+    for k, (clip, start, _edit_len, src_start, src_len, tempo) in enumerate(voices):
+        inputs += ["-i", str(clip)]
+        tempo_f = f",atempo={tempo:.5f}" if abs(tempo - 1) > 1e-3 else ""
+        chains.append(f"[{k + 2}:a]atrim=start={src_start:.4f}:duration={src_len:.4f},asetpts=PTS-STARTPTS{tempo_f},{AFMT},"
+                      f"volume={clip_volume},adelay={round(start * 1000)}:all=1[v{k}]")
+    n = len(voices)
+    chains.append(f"{''.join(f'[v{k}]' for k in range(n))}amix=inputs={n}:normalize=0:duration=longest,apad[voice]" if n > 1
+                  else "[v0]apad[voice]")
+    return inputs, chains
+
+
+def _music_mix_chains(music_f, fade_f, duck):
+    """mux: the music (input 1, through music_f) under [voice], ducked by it when duck > 0, limited and faded into [aout]."""
+    fade = f",{fade_f}" if fade_f else ""
+    chains = [f"[1:a]{AFMT}{',' + music_f if music_f else ''}[music]"]
+    if duck <= 0:
+        return chains + [f"[music][voice]amix=inputs=2:normalize=0:duration=first,alimiter=limit=0.95{fade}[aout]"]
+    return chains + ["[voice]asplit=2[vkey][vmix]",
+                     f"[music][vkey]sidechaincompress=threshold=0.02:ratio={2 + 10 * duck:.2f}:attack=20:release=350[ducked]",
+                     f"[ducked][vmix]amix=inputs=2:normalize=0:duration=first,alimiter=limit=0.95{fade}[aout]"]
 
 
 EDIT_NICE = 15  # scheduling priority of the render (19 = lowest)
@@ -778,13 +787,10 @@ def _mux_and_sounds(cuts, clip_paths, build_dir, audio, audio_start, total_frame
         add_card_sounds(out_path, times, opts.card_sound_volume, seed=len(times))
 
 
-def make_edit(pipeline_dir, out_name=None, audio=None, beat_times_file=DEFAULT_BEAT_TIMES,
-                start_time=None, lead_in_seconds=2.0, subcuts_per_image=2, beats_per_cut=2,
-                last_weight=2.0, zoom=None, stills=False, order=None, opts: EditOptions = None) -> Path:
-    """Beat-synced edit over the music (see the module docstring)."""
+def _edit_stages(pipeline_dir, stills, order, opts):
+    """make_edit's stages, setting the edit's FPS and frame from them: the cuts played in full before the music comes in
+    (opts.music_from_stage) and the stage sources the beat-synced part is cut from."""
     global FPS
-    opts = opts or EditOptions()
-    _apply_opts(opts)
     clips = stage_sources(pipeline_dir, stills, order, opts.as_still, opts.stills_from)
     if len(clips) < 2:
         raise FileNotFoundError(f"Need at least 2 stages (clips or stills) in {pipeline_dir}")
@@ -794,6 +800,16 @@ def make_edit(pipeline_dir, out_name=None, audio=None, beat_times_file=DEFAULT_B
     prefix, clips = scenario_cuts(clips[:p], STILL_SECONDS, 0)[0] if p else [], clips[p:]
     if len(clips) < 2:
         raise ValueError("the music has to start at least two stages before the end of the edit")
+    return prefix, clips
+
+
+def make_edit(pipeline_dir, out_name=None, audio=None, beat_times_file=DEFAULT_BEAT_TIMES,
+                start_time=None, lead_in_seconds=2.0, subcuts_per_image=2, beats_per_cut=2,
+                last_weight=2.0, zoom=None, stills=False, order=None, opts: EditOptions = None) -> Path:
+    """Beat-synced edit over the music (see the module docstring)."""
+    opts = opts or EditOptions()
+    _apply_opts(opts)
+    prefix, clips = _edit_stages(pipeline_dir, stills, order, opts)
     prefix_frames = sum(c.frames for c in prefix)
     collage_files = collage_stills(pipeline_dir, opts) if opts.collage else []
     if opts.card_sounds:

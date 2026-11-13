@@ -211,29 +211,22 @@ def _on(pod: dict, gpus) -> bool:
     return bool({g.get("id"), g.get("displayName"), m.get("gpuTypeId")} & set(gpus))
 
 
-def ensure_up(log=print, big=False) -> str:
-    """The URL of a pod whose ComfyUI answers: the running one, else a new one (a stopped or dead leftover is terminated first).
-    big = a clip longer than config.RUNPOD_BIG_SECONDS: only RUNPOD_BIG_GPUS will do, so a smaller running pod is replaced (the
-    runpod lane runs one job at a time, so it has nothing of ours on it)."""
-    t, created = time.time(), False
-    gpus = config.RUNPOD_BIG_GPUS if big else config.RUNPOD_GPUS
-    pod = find()
+def _reusable(pod, big, gpus, log):
+    """The found pod if animate can use it: a stopped or dead leftover is terminated, and so is a small pod when the clip needs a
+    96 GB GPU (the runpod lane runs one job at a time, so it has nothing of ours on it)."""
     if pod and pod.get("desiredStatus") != "RUNNING":
         log(f"terminating the leftover pod {pod['id']} ({pod.get('desiredStatus')})")
         terminate(pod["id"])
-        pod = None
+        return None
     if pod and big and not _on(pod, gpus):
         log(f"clips over {config.RUNPOD_BIG_SECONDS:g} s need a 96 GB GPU: replacing pod {pod['id']} ({gpu_name(pod)})")
         terminate(pod["id"])
-        pod = None
-    if pod:
-        log(f"RunPod pod {pod['id']} is running on {gpu_name(pod)} (${pod.get('costPerHr', '?')}/hr)")
-    else:
-        log(f"starting RunPod pod… (first free of {len(gpus)} {'96 GB ' if big else ''}Blackwell types, {config.RUNPOD_DATACENTER})")
-        pod = _create_waiting(log, gpus)
-        created = True
-        log(f"pod {pod['id']} created on {gpu_name(pod)} (${pod.get('costPerHr', '?')}/hr while up; it deletes itself after "
-            f"{config.RUNPOD_IDLE_MINUTES:g} min idle)")
+        return None
+    return pod
+
+
+def _wait_ready(pod, created, log) -> bool:
+    """Wait until the pod's ComfyUI answers. False = a reused pod turned out to be gone (its watchdog deleted it)."""
     server, said = url(pod["id"]), time.time()
     boot = time.time()  # the boot clock starts once the pod exists, not while waiting for a free GPU
     while not answers(server):
@@ -247,7 +240,7 @@ def ensure_up(log=print, big=False) -> str:
             if created or ": 404 " not in str(e):
                 raise
             log(f"pod {pod['id']} is gone (its watchdog deleted it), starting a new one")
-            return ensure_up(log, big)
+            return False
         if desired != "RUNNING":
             raise PodError(f"pod {pod['id']} stopped while booting -- see the RunPod console")
         if time.time() - said > 60:
@@ -255,10 +248,30 @@ def ensure_up(log=print, big=False) -> str:
             said = time.time()
         time.sleep(10)
     log(f"RunPod pod ready in {time.time() - boot:.0f}s: {server}")
+    return True
+
+
+def ensure_up(log=print, big=False) -> str:
+    """The URL of a pod whose ComfyUI answers: the running one, else a new one (a stopped or dead leftover is terminated first).
+    big = a clip longer than config.RUNPOD_BIG_SECONDS: only RUNPOD_BIG_GPUS will do, so a smaller running pod is replaced."""
+    t, created = time.time(), False
+    gpus = config.RUNPOD_BIG_GPUS if big else config.RUNPOD_GPUS
+    pod = _reusable(find(), big, gpus, log)
+    if pod:
+        log(f"RunPod pod {pod['id']} is running on {gpu_name(pod)} (${pod.get('costPerHr', '?')}/hr)")
+    else:
+        log(f"starting RunPod pod… (first free of {len(gpus)} {'96 GB ' if big else ''}Blackwell types, {config.RUNPOD_DATACENTER})")
+        pod = _create_waiting(log, gpus)
+        created = True
+        log(f"pod {pod['id']} created on {gpu_name(pod)} (${pod.get('costPerHr', '?')}/hr while up; it deletes itself after "
+            f"{config.RUNPOD_IDLE_MINUTES:g} min idle)")
+    boot = time.time()
+    if not _wait_ready(pod, created, log):
+        return ensure_up(log, big)
     if created:
         _save_starts(_starts() + [{"t": round(t), "pod": pod["id"], "gpu": gpu_name(pod), "ready_s": round(time.time() - boot),
                                     "cost_per_hr": pod.get("costPerHr"), "seen": round(time.time())}])
-    return server
+    return url(pod["id"])
 
 
 def _started(s):

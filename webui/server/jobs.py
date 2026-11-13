@@ -384,7 +384,11 @@ class Manager:
 
     @staticmethod
     def _name_flag(project, req):
-        name = req.get("out_name") or f"{project}_{'nomusic' if req.get('no_music') else 'edit' if req.get('beat_sync', True) else 'music'}_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
+        if req.get("no_music"):
+            kind = "nomusic"
+        else:
+            kind = "edit" if req.get("beat_sync", True) else "music"
+        name = req.get("out_name") or f"{project}_{kind}_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
         name = Path(name).name
         if not name.endswith(".mp4"):
             name += ".mp4"
