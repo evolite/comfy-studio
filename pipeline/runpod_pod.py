@@ -26,6 +26,9 @@ STARTS = config.LOGS_DIR / "runpod_starts.json"  # pods the studio started, newe
 READY_TIMEOUT = 900  # a fresh pod: image pull + the template's boot on the volume (404 -> 502 -> 200 on the proxy meanwhile);
 # cold starts usually take 1-4 min but some hosts pull slowly, so only one silent past 15 is taken as stuck and deleted
 GPU_RETRY_S = 30  # how often _create_waiting asks RunPod again while no GPU is free
+WAKE = config.LOGS_DIR / "runpod_wake"  # touched when a pod is created or deleted: status() in other processes re-asks at once
+STATUS_TTL = {"up": 10, "down": 300, "limited": 900}  # status() caches the pod list: the ⚙ page and the KDE widget poll it all
+# day, and RunPod's REST API has a daily rate limit (429) that a 10 s poll with no pod used up on its own
 
 
 class PodError(RuntimeError):
@@ -122,12 +125,14 @@ def _post(gpus) -> dict:
                     "BOOT_SECONDS": str(READY_TIMEOUT + 120),  # the watchdog's own boot limit: past ours, so we delete it first
                     "FETCH_FILES": _fetch_files()}}
     try:
-        return _api("/pods", body, "POST")
+        pod = _api("/pods", body, "POST")
     except PodError as e:
         if "no longer any instances available" in str(e) or "no instances" in str(e).lower():
             raise NoGpu(f"RunPod has none of the RUNPOD_GPUS free in {config.RUNPOD_DATACENTER} right now: try again later, "
                            f"or switch the ⚙ animate target to cloud") from e
         raise
+    _wake()
+    return pod
 
 
 def gpu_name(pod: dict) -> str:
@@ -264,10 +269,41 @@ def _started(s):
         return None
 
 
+def _wake() -> None:
+    WAKE.parent.mkdir(parents=True, exist_ok=True)
+    WAKE.touch()
+
+
+def _wake_t() -> float:
+    try:
+        return WAKE.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+_cache = {"t": 0.0, "ttl": 0.0, "pod": None, "err": None}
+
+
+def _find_cached():
+    """find() for the pollers, at most every STATUS_TTL: 10 s while a pod exists, 5 min while none (a create or delete anywhere
+    touches WAKE, which ends the wait), 15 min after a 429."""
+    now = time.time()
+    if now - _cache["t"] > _cache["ttl"] or _wake_t() > _cache["t"]:
+        try:
+            pod = find()
+            _cache.update(pod=pod, err=None, ttl=STATUS_TTL["up" if pod else "down"])
+        except PodError as e:
+            _cache.update(pod=None, err=e, ttl=STATUS_TTL["limited" if ": 429 " in str(e) else "up"])
+        _cache["t"] = now
+    if _cache["err"]:
+        raise _cache["err"]
+    return _cache["pod"]
+
+
 def status() -> dict:
     """For the ⚙ page and the header: {"up": False} or the pod's id, state, whether ComfyUI answers, uptime seconds, $/hr and what
     this pod has cost so far (session_cost: uptime since it was rented, boot included, x $/hr -- how RunPod bills it)."""
-    pod = find()
+    pod = _find_cached()
     if not pod:
         return {"up": False, "gpu": "first free Blackwell: " + config.RUNPOD_GPUS[0], "last_start": last_start(), "last_run": last_run()}
     started = _started(pod.get("lastStartedAt"))
@@ -286,4 +322,5 @@ def terminate(pod_id: str = None):
     pod_id = pod_id or (find() or {}).get("id")
     if pod_id:
         _api(f"/pods/{pod_id}", method="DELETE")
+        _wake()
     return pod_id
