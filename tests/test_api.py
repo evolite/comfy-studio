@@ -59,7 +59,8 @@ def test_no_music_settings_are_saved_and_become_edit_flags(tmp_path):
     assert argv[argv.index("--transition"):argv.index("--transition") + 4] == ["--transition", "dissolve", "--transition-seconds", "1"]
     assert argv[argv.index("--mute-clip-audio") + 1] == "2"
     argv = Manager.edit_args(tmp_path, "p", {"mode": "animate", "trims_end": {"3": "0.4", "4": "", "5": "0"}}, "interp", [3, 4, 5])
-    assert argv[argv.index("--trim-end"):] == ["--trim-end", "3=0.4"]
+    i = argv.index("--trim-end")
+    assert argv[i:i + 2] == ["--trim-end", "3=0.4"] and argv.count("--trim-end") == 1  # only stage 3 trims; the clip-audio flags follow
 
 
 def test_remix_copies_picked_stages():
