@@ -5,7 +5,7 @@ type CutInfo = { folder?: string; start?: number; end?: number };
 type Grip = "in" | "out" | "head";
 
 /** The board's Cut phase, one per stage: the source clip with in/out handles to drag; Save cut writes cut/videos/stage_N.mp4
- * (video/cut_clip.py). Keys while focused: i / o = in / out at the playhead, ← → = one frame, space = play the kept span. */
+ * (video/cut_clip.py). Keys while the bar is focused (click it or the video): i / o = in / out at the playhead, ← → = one frame, space = play the kept span. */
 export default function CutEditor({ project, sid, folder, v, fps, onSaved }: {
   readonly project: string; readonly sid: number; readonly folder: string; readonly v: number; readonly fps: number; readonly onSaved: () => void;
 }) {
@@ -45,7 +45,11 @@ export default function CutEditor({ project, sid, folder, v, fps, onSaved }: {
     return () => cancelAnimationFrame(raf);
   }, [playing, inP, outP]);
 
-  const seek = (s: number) => { const el = vid.current; if (el) el.currentTime = s; setT(s); };
+  const seek = (s: number) => {
+    const el = vid.current;
+    if (el) el.currentTime = s;
+    setT(s);
+  };
   const setIn = (s: number) => { const x = Math.min(snap(s), outP - 1 / fps); setSpan([Math.max(0, x), outP]); seek(Math.max(0, x)); };
   const setOut = (s: number) => { const x = Math.max(snap(s), inP + 1 / fps); setSpan([inP, Math.min(dur, x)]); seek(Math.min(dur, x)); };
   const play = () => {
@@ -94,14 +98,18 @@ export default function CutEditor({ project, sid, folder, v, fps, onSaved }: {
       .finally(() => setBusy(false));
   };
   const pct = (s: number) => `${dur ? (s / dur) * 100 : 0}%`;
-  const changed = !saved || saved.folder !== folder || Math.abs((saved.start ?? 0) - inP) > 1e-3 || Math.abs((saved.end ?? -1) - outP) > 1e-3;
+  const changed = saved?.folder !== folder || Math.abs((saved?.start ?? 0) - inP) > 1e-3 || Math.abs((saved?.end ?? -1) - outP) > 1e-3;
 
   return (
-    <div className="cutter" tabIndex={0} onKeyDown={key} title="i / o = set in / out at the playhead · ← → = one frame · space = play the kept part">
-      <video ref={vid} preload="auto" src={fileUrl(project, folder, "clip", sid, v)} onClick={play}
+    <div className="cutter">
+      <video ref={vid} preload="auto" src={fileUrl(project, folder, "clip", sid, v)} onClick={() => { play(); bar.current?.focus(); }}
         onLoadedMetadata={(e) => setDur(e.currentTarget.duration)} onPause={() => setPlaying(false)}
-        onSeeked={(e) => setT(e.currentTarget.currentTime)} />
-      <div ref={bar} className="cut-bar" onPointerDown={(e) => down(e, "head")} onPointerMove={move} onPointerUp={() => { grip.current = null; }}>
+        onSeeked={(e) => setT(e.currentTarget.currentTime)}>
+        <track kind="captions" />
+      </video>
+      <div ref={bar} className="cut-bar" role="slider" tabIndex={0} aria-label="playhead" aria-valuemin={0} aria-valuemax={dur} aria-valuenow={t}
+        title="i / o = set in / out at the playhead · ← → = one frame · space = play the kept part"
+        onKeyDown={key} onPointerDown={(e) => down(e, "head")} onPointerMove={move} onPointerUp={() => { grip.current = null; }}>
         <div className="cut-keep" style={{ left: pct(inP), width: pct(outP - inP) }} />
         <div className="cut-head" style={{ left: pct(t) }} />
         <button type="button" className="cut-grip in" style={{ left: pct(inP) }} aria-label="in point" onPointerDown={(e) => down(e, "in")} />
