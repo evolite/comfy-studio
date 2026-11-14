@@ -374,7 +374,6 @@ class Manager:
         for k, flag in EDIT_FLAGS.items():
             if req.get(k) not in (None, ""):
                 flags += [flag, str(req[k])]
-        flags += Manager._trim_flags(req)
         if req.get("zoom"):
             flags += ["--zoom"] + ([] if req["zoom"] is True else [str(req["zoom"])])
         flags = Manager._still_flags(d, req, flags)
@@ -393,17 +392,6 @@ class Manager:
         if not name.endswith(".mp4"):
             name += ".mp4"
         return ["--out-name", name]  # make_edit writes it to <folder>/edits/
-
-    @staticmethod
-    def _trim_flags(req):
-        flags = []
-        trims = {int(k): float(v) for k, v in (req.get("trims") or {}).items() if v not in (None, "")}
-        if trims:
-            flags += ["--trim", *(f"{k}={v}" for k, v in trims.items())]
-        trims_end = {int(k): float(v) for k, v in (req.get("trims_end") or {}).items() if v not in (None, "") and float(v) > 0}
-        if trims_end:
-            flags += ["--trim-end", *(f"{k}={v}" for k, v in trims_end.items())]
-        return flags
 
     @staticmethod
     def _mute_flags(req):

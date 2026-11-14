@@ -67,8 +67,6 @@ textarea { width:100%; resize:vertical; font:12.5px/1.45 ui-monospace, monospace
 .chip-bar { display:flex; align-items:center; gap:4px; font-size:12px; padding:0 2px; } .chip-bar b { margin-right:auto; }
 .compose .chip button.chip-t { position:static; background:none; border:1px solid transparent; border-radius:5px; padding:0 3px; cursor:pointer; font-size:13px; line-height:20px; }
 .compose .chip button.chip-t:hover { border-color:var(--line); } .compose .chip button.chip-t.off { opacity:.6; } .chip-kind { font-size:13px; opacity:.7; }
-.chip-trim { display:flex; gap:4px; } .chip-trim label { flex:1; display:flex; flex-direction:column; font-size:10px; color:var(--dim); text-transform:uppercase; letter-spacing:.04em; text-align:center; }
-.chip-trim input { width:100%; box-sizing:border-box; padding:2px 4px; font-size:12px; text-align:center; height:24px; }
 .compose .pool { align-items:center; margin:8px 0 0; }
 .compose .advanced { margin:4px 0 0; background:var(--panel2); } .cmp-empty { padding:24px; }
 .cmp-render { position:sticky; bottom:0; z-index:3; border-color:color-mix(in srgb, var(--accent) 40%, var(--line)); box-shadow:0 -6px 18px rgba(0,0,0,.25); }

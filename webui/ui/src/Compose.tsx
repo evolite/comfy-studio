@@ -125,7 +125,7 @@ function mergeOrder(all: number[], seq: number[]): number[] {
 
 type EditReqArgs = {
   folder: string; mode: Mode; items: Item[]; isClip: (id: number) => boolean; sfolder: string; zoom: boolean; musicOn: boolean; beatSync: boolean;
-  trims: Record<number, string>; trimsEnd: Record<number, string>; muted: number[]; music: Music; opts: Record<string, string>;
+  muted: number[]; music: Music; opts: Record<string, string>;
   pol: Polaroid; cfolder: string;
 };
 
@@ -199,8 +199,6 @@ function editRequest(a: EditReqArgs): Record<string, unknown> {
   const { items, isClip, mode } = a;
   const req: Record<string, unknown> = { action: "edit", folder: a.folder, mode: mode === "mix" ? "animate" : mode, stages: items.map((i) => i.id), zoom: (a.musicOn && a.beatSync && a.zoom) || undefined };
   if (mode === "mix") { req.still_stages = [...new Set(items.filter((i) => !isClip(i.id)).map((i) => i.id))]; req.stills_from = a.sfolder; }
-  const forClips = (t: Record<number, string>) => Object.fromEntries(Object.entries(t).filter(([id, v]) => v !== "" && items.some((i) => i.id === Number(id) && isClip(i.id))));
-  if (mode !== "stills") { req.trims = forClips(a.trims); req.trims_end = forClips(a.trimsEnd); }
   const mutedHere = a.muted.filter((id) => items.some((i) => i.id === id));
   return { ...req, ...soundFields(a, mutedHere), ...polaroidFields(a) };
 }
@@ -247,10 +245,10 @@ function SourceCard({ p, mode, folder, sfolder, eligible, stillFolders, progress
   );
 }
 
-/** One shot in the timeline: thumb, clip/still switch, audio mute, trims. */
-function Chip({ it, i, dragging, clip, thumb, canSwitch, audible, muted, trim, trimEnd, trimDefault, onDragStart, onDrop, onDrop_, onSwitch, onMute, onTrim, onTrimEnd }: {
-  readonly it: Item; readonly i: number; readonly dragging: boolean; readonly clip: boolean; readonly thumb: string; readonly canSwitch: boolean; readonly audible: boolean; readonly muted: boolean; readonly trim: string; readonly trimEnd: string; readonly trimDefault: number;
-  readonly onDragStart: () => void; readonly onDrop: () => void; readonly onDrop_: () => void; readonly onSwitch: () => void; readonly onMute: () => void; readonly onTrim: (v: string) => void; readonly onTrimEnd: (v: string) => void;
+/** One shot in the timeline: thumb, clip/still switch, audio mute (trim clips in the board's Cut phase). */
+function Chip({ it, i, dragging, clip, thumb, canSwitch, audible, muted, onDragStart, onDrop, onDrop_, onSwitch, onMute }: {
+  readonly it: Item; readonly i: number; readonly dragging: boolean; readonly clip: boolean; readonly thumb: string; readonly canSwitch: boolean; readonly audible: boolean; readonly muted: boolean;
+  readonly onDragStart: () => void; readonly onDrop: () => void; readonly onDrop_: () => void; readonly onSwitch: () => void; readonly onMute: () => void;
 }) {
   const icon = clip ? "🎞" : "🖼";
   const stop = (f: () => void) => (e: { stopPropagation: () => void }) => { e.stopPropagation(); f(); };
@@ -268,10 +266,6 @@ function Chip({ it, i, dragging, clip, thumb, canSwitch, audible, muted, trim, t
           : <span className="chip-kind">{icon}</span>}
         {audible && <button className={`chip-t${muted ? " off" : ""}`} title={muted ? "clip audio muted — click to include" : "clip audio on — click to mute"} onClick={stop(onMute)}>{muted ? "🔇" : "🔊"}</button>}
       </div>
-      {clip && <div className="chip-trim" title={`seconds cut from the start (blank = ${trimDefault}) and the end (blank = 0) of this clip`}>
-        <label>in<input type="number" min={0} step={0.05} placeholder={String(trimDefault)} value={trim} onChange={(e) => onTrim(e.target.value)} onClick={(e) => e.stopPropagation()} draggable={false} /></label>
-        <label>out<input type="number" min={0} step={0.05} placeholder="0" value={trimEnd} onChange={(e) => onTrimEnd(e.target.value)} onClick={(e) => e.stopPropagation()} draggable={false} /></label>
-      </div>}
     </div>
   );
 }
@@ -437,7 +431,7 @@ function EditsCard({ folder, list, nOther, showOther, onShowOther, tile, projBus
   );
 }
 
-/** Per-project UI state kept in browser storage: cut-from mode + folders, per-stage kinds, trims and mutes, and the edit settings
+/** Per-project UI state kept in browser storage: cut-from mode + folders, per-stage kinds and mutes, and the edit settings
  * (music on/off, beat sync, track, beats, start time and stage, cut timing, punch-in zoom, levels; the output name is per edit).
  * Music is off until switched on: the clips' own sound is the base, music a layer over it, beat sync an add-on to the music. */
 function useComposePrefs(name: string) {
@@ -450,12 +444,6 @@ function useComposePrefs(name: string) {
   const kkey = `composeKind:${name}`;  // mix: clip or still per stage
   const [kinds, setKinds] = useState<Record<number, ClipKind>>(() => loadJson(kkey, {}));
   const setKind = (id: number, k: ClipKind) => setKinds((m) => { const n = { ...m, [id]: k }; store(kkey, n); return n; });
-  const tkey = `composeTrim:${name}`;  // per-stage trim (s cut from the clip start)
-  const [trims, setTrims] = useState<Record<number, string>>(() => loadJson(tkey, {}));
-  const setTrim = (id: number, v: string) => setTrims((t) => { const n = { ...t, [id]: v }; store(tkey, n); return n; });
-  const ekey = `composeTrimEnd:${name}`;  // per-stage end trim (s cut from the clip's end)
-  const [trimsEnd, setTrimsEnd] = useState<Record<number, string>>(() => loadJson(ekey, {}));
-  const setTrimEnd = (id: number, v: string) => setTrimsEnd((t) => { const n = { ...t, [id]: v }; store(ekey, n); return n; });
   const mkey = `composeMute:${name}`;  // stages whose clip audio is left out of the mix
   const [muted, setMuted] = useState<number[]>(() => loadJson(mkey, []));
   const toggleMute = (id: number) => setMuted((m) => { const n = m.includes(id) ? m.filter((x) => x !== id) : [...m, id]; store(mkey, n); return n; });
@@ -466,7 +454,7 @@ function useComposePrefs(name: string) {
   const [beatSync, setBeatSync] = useState(!!savedOpts.beat_sync);
   const [zoom, setZoom] = useState(!!savedOpts.zoom_on);
   useEffect(() => { const { out_name: _, ...keep } = opts; store(akey, { ...keep, music_on: musicOn, beat_sync: beatSync, zoom_on: zoom }); }, [akey, musicOn, beatSync, zoom, opts]);
-  return { folder, setFolder, mode, setMode, stillsFrom, setStillsFrom, kinds, setKind, trims, setTrim, trimsEnd, setTrimEnd, muted, toggleMute, opts, setOpts, musicOn, setMusicOn, beatSync, setBeatSync, zoom, setZoom };
+  return { folder, setFolder, mode, setMode, stillsFrom, setStillsFrom, kinds, setKind, muted, toggleMute, opts, setOpts, musicOn, setMusicOn, beatSync, setBeatSync, zoom, setZoom };
 }
 
 /** The timeline: the stages in project order (the Board's ⠿ order), synced both ways — a drag here reorders the project's
@@ -515,7 +503,7 @@ export default function Compose({ name }: { readonly name: string }) {
   const audio = useQuery({ queryKey: ["audio"], queryFn: () => api<Audio>("/audio") }).data;
   const run = useRun(name);
   const jobs = useJobs().data ?? [];
-  const { folder, setFolder, mode, setMode, stillsFrom, setStillsFrom, kinds, setKind, trims, setTrim, trimsEnd, setTrimEnd, muted, toggleMute, opts, setOpts, musicOn, setMusicOn, beatSync, setBeatSync, zoom, setZoom } = useComposePrefs(name);
+  const { folder, setFolder, mode, setMode, stillsFrom, setStillsFrom, kinds, setKind, muted, toggleMute, opts, setOpts, musicOn, setMusicOn, beatSync, setBeatSync, zoom, setZoom } = useComposePrefs(name);
   const [seen, setSeen] = useState<SeenEdits>(() => loadSeenEdits(name));
   useEffect(() => { setSeen(loadSeenEdits(name)); }, [name]);
   const markSeen = (file: string, mtime: number) => setSeen((prev) => {
@@ -584,9 +572,9 @@ export default function Compose({ name }: { readonly name: string }) {
     const a = [...items]; const [m] = a.splice(drag, 1); a.splice(to, 0, m); commit(a, true); setDrag(null);
   };
   const firstVoiced = items.find((i) => isClip(i.id) && !muted.includes(i.id) && fs?.clips?.[i.id]);
-  const voiceClip = firstVoiced && { url: fileUrl(name, folder, "clip", firstVoiced.id, fs!.clips[firstVoiced.id]), trim: Number(trims[firstVoiced.id] || trimStart(folder)) };
+  const voiceClip = firstVoiced && { url: fileUrl(name, folder, "clip", firstVoiced.id, fs!.clips[firstVoiced.id]), trim: trimStart(folder) };
   const render = () => {
-    run.mutate(editRequest({ folder, mode, items, isClip, sfolder, zoom, musicOn, beatSync, trims, trimsEnd, muted, music, opts, pol, cfolder }), {
+    run.mutate(editRequest({ folder, mode, items, isClip, sfolder, zoom, musicOn, beatSync, muted, music, opts, pol, cfolder }), {
       onSuccess: () => { const t = setInterval(() => qc.invalidateQueries({ queryKey: ["project", name] }), 3000); setTimeout(() => clearInterval(t), 600000); },
       onError: (e) => setMsg(`error: ${e.message}`),
     });
@@ -611,10 +599,10 @@ export default function Compose({ name }: { readonly name: string }) {
         </div>
         <div className="strip">
           {items.map((it, i) => (
-            <Chip key={it.key} trimDefault={trimStart(folder)} it={it} i={i} dragging={drag === i} clip={isClip(it.id)} thumb={thumb(it.id)} canSwitch={canSwitch(it.id)}
-              audible={isClip(it.id)} muted={muted.includes(it.id)} trim={trims[it.id] ?? ""} trimEnd={trimsEnd[it.id] ?? ""}
+            <Chip key={it.key} it={it} i={i} dragging={drag === i} clip={isClip(it.id)} thumb={thumb(it.id)} canSwitch={canSwitch(it.id)}
+              audible={isClip(it.id)} muted={muted.includes(it.id)}
               onDragStart={() => setDrag(i)} onDrop={() => reorder(i)} onDrop_={() => commit(items.filter((x) => x.key !== it.key))}
-              onSwitch={() => setKind(it.id, isClip(it.id) ? "still" : "clip")} onMute={() => toggleMute(it.id)} onTrim={(v) => setTrim(it.id, v)} onTrimEnd={(v) => setTrimEnd(it.id, v)} />
+              onSwitch={() => setKind(it.id, isClip(it.id) ? "still" : "clip")} onMute={() => toggleMute(it.id)} />
           ))}
           {items.length === 0 && <div className="dim cmp-empty">no {mode === "mix" ? "" : "approved "}{EMPTY_KIND[mode]} in this folder</div>}
         </div>
