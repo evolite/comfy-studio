@@ -1,6 +1,7 @@
 """Trim a finished clip's start and end (the board's Cut phase): <folder>/videos/stage_N.mp4 -> cut/videos/stage_N.mp4.
 
-A frame-exact re-encode (libx264 CRF 16, the source's fps, its audio as AAC), so the cut lands where the handles were set. The source
+A frame-exact re-encode (libx264 CRF 16, the source's fps, its audio as AAC), so the cut lands where the handles were set;
+the source's `prompt` tag is kept (Civitai's clip parameters, civitai_meta.clip_params). The source
 clip stays; a re-cut moves the previous result into the stage's history (pipeline/history.py). cut/_debug/stage_N/source.json records
 the source folder and the in/out seconds, so the editor reopens where it was left.
 """
@@ -42,7 +43,7 @@ def cut(d: Path, sid, folder: str, start: float, end: float) -> Path:
         subprocess.run(["ffmpeg", "-y", "-ss", f"{start:.4f}", "-i", str(src), "-t", f"{end - start:.4f}", "-map", "0:v:0",
                         *(["-map", "0:a:0", "-c:a", "aac", "-b:a", "192k"] if audio else []),
                         "-c:v", "libx264", "-crf", "16", "-preset", "medium", "-pix_fmt", "yuv420p", "-r", f"{fps:g}",
-                        "-movflags", "+faststart", str(out), "-loglevel", "error"], check=True)
+                        "-movflags", "+faststart+use_metadata_tags", str(out), "-loglevel", "error"], check=True)
         dst.parent.mkdir(parents=True, exist_ok=True)
         history.archive(d, dst)
         shutil.move(out, dst)
