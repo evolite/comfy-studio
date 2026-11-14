@@ -2,8 +2,7 @@
 
 A frame-exact re-encode (libx264 CRF 16, the source's fps, its audio as AAC), so the cut lands where the handles were set. The source
 clip stays; a re-cut moves the previous result into the stage's history (pipeline/history.py). cut/_debug/stage_N/source.json records
-the source folder and the in/out seconds, so the editor reopens where it was left. Make_edit takes cut/ clips without its default
-ramp-up trim (make_edit.trim_for): the in-point is already chosen.
+the source folder and the in/out seconds, so the editor reopens where it was left.
 """
 import json
 import shutil

@@ -14,10 +14,6 @@ type ClipKind = "clip" | "still";
 type Progress = { done: number; total: number };
 type EditFile = { name: string; mtime: number; size: number; folder?: string | null };
 let keySeq = 0;
-const TRIM_START = 0.2;  // video/make_edit.py TRIM_START: seconds cut from a clip's start when no trim is set
-/** The start trim a clip gets when none is set: none for a cut/ clip (its in-point is already chosen, make_edit.trim_for). */
-const trimStart = (folder: string) => (folder === "cut" ? 0 : TRIM_START);
-
 const store = (key: string, v: unknown) => { try { localStorage.setItem(key, JSON.stringify(v)); } catch { /* storage unavailable */ } };
 function loadJson<T>(key: string, fallback: T): T {
   try { return JSON.parse(localStorage.getItem(key) ?? "null") ?? fallback; } catch { return fallback; }
@@ -572,7 +568,7 @@ export default function Compose({ name }: { readonly name: string }) {
     const a = [...items]; const [m] = a.splice(drag, 1); a.splice(to, 0, m); commit(a, true); setDrag(null);
   };
   const firstVoiced = items.find((i) => isClip(i.id) && !muted.includes(i.id) && fs?.clips?.[i.id]);
-  const voiceClip = firstVoiced && { url: fileUrl(name, folder, "clip", firstVoiced.id, fs!.clips[firstVoiced.id]), trim: trimStart(folder) };
+  const voiceClip = firstVoiced && { url: fileUrl(name, folder, "clip", firstVoiced.id, fs!.clips[firstVoiced.id]), trim: 0 };
   const render = () => {
     run.mutate(editRequest({ folder, mode, items, isClip, sfolder, zoom, musicOn, beatSync, muted, music, opts, pol, cfolder }), {
       onSuccess: () => { const t = setInterval(() => qc.invalidateQueries({ queryKey: ["project", name] }), 3000); setTimeout(() => clearInterval(t), 600000); },

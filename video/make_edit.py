@@ -89,7 +89,6 @@ import polaroid  # noqa: E402  # video/, beside this file
 FPS = 30  # the edit's frame rate; make_edit() raises it to HI_FPS when every clip is interpolated (edit_fps)
 HI_FPS = 48  # RIFE x2 of the 24 fps i2v clips (video/interpolate.py): render at their own rate, no frame dropping
 FADE_OUT = 0.5  # seconds the music fades out over at the end of the edit (--fade-out; 0 = hard stop)
-TRIM_START = 0.2  # seconds cut from the start of every video clip (i2v ramp-up); stills are untouched
 WIDTH, HEIGHT = 1080, 1920  # the edit's frame; set_frame() keeps the width and takes the height from the shots' own proportions
 AFMT = "aformat=sample_rates=48000:channel_layouts=stereo"  # every audio input is brought to this before mixing
 AOUT = "[aout]"  # the filter graph's final audio pad
@@ -143,7 +142,7 @@ class Cut:
 @dataclass
 class EditOptions:
     """The knobs make_edit/make_scenario take besides their beat/layout inputs, bundled so the signatures stay short."""
-    trims: dict | None = None     # stage id -> seconds cut from that clip's start (others: TRIM_START)
+    trims: dict | None = None     # stage id -> seconds cut from that clip's start (others: 0)
     trims_end: dict | None = None # stage id -> seconds cut from the clip's end (others: 0)
     clip_audio: bool = False      # layer the clips' own audio over the music
     clip_volume: float = 1.0
@@ -302,7 +301,7 @@ def clip_duration(path):
     return float(out.strip())
 
 
-TRIMS = {}  # stage id -> seconds cut from that clip's start (--trim ID=SECONDS); other stages use TRIM_START
+TRIMS = {}  # stage id -> seconds cut from that clip's start (--trim ID=SECONDS); other stages play from their first frame
 
 
 TRIMS_END = {}  # stage id -> seconds cut from the end of that clip (--trim-end ID=SECONDS); other stages keep their end
@@ -348,10 +347,9 @@ def build_collage(stills, frames, land_at, out_path, card_size):
 
 
 def trim_for(path):
-    """Seconds cut from a clip's start: its --trim, else TRIM_START -- 0 for a cut/ clip, whose in-point is already chosen."""
+    """Seconds cut from a clip's start: its --trim, else none (trimming is done in the board's Cut phase, video/cut_clip.py)."""
     stem = Path(path).stem
-    default = 0.0 if Path(path).parent.parent.name == "cut" else TRIM_START
-    return TRIMS.get(int(stem[6:]), default) if stem[6:].isdigit() else default
+    return TRIMS.get(int(stem[6:]), 0.0) if stem[6:].isdigit() else 0.0
 
 
 def trim_end_for(path):
@@ -360,8 +358,7 @@ def trim_end_for(path):
 
 
 def usable_duration(path):
-    """Seconds of a video clip the edit uses: i2v clips ramp up slowly, so the first trim_for() seconds are cut off, and
-    trim_end_for() seconds come off the end."""
+    """Seconds of a video clip the edit uses: the clip minus its trim_for() seconds at the start and trim_end_for() at the end."""
     return max(0.1, clip_duration(path) - trim_for(path) - trim_end_for(path))
 
 
@@ -1044,7 +1041,7 @@ def main():
                     help="Stage numbers in play order (first = lead-in), e.g. --order 3 2 1 4. "
                          "Repeats/drops allowed. Default: ascending stage-number order.")
     ap.add_argument("--trim", nargs="+", default=[], metavar="ID=SECONDS",
-                    help=f"Per-stage seconds cut from the start of that stage's clip (default {TRIM_START} for the others)")
+                    help="Per-stage seconds cut from the start of that stage's clip (default 0)")
     ap.add_argument("--trim-end", nargs="+", default=[], metavar="ID=SECONDS",
                     help="Per-stage seconds cut from the end of that stage's clip (default 0)")
     ap.add_argument("--zoom", type=float, nargs="?", const=1.5, default=None,

@@ -77,7 +77,7 @@ def test_no_music_edit_plays_every_stage_in_full_through_transitions(tmp_path, t
     out = mt.make_scenario(run, str(tmp_path / "out.mp4"), transition=transition, transition_seconds=0.5, fade_in=0.2)
     frames = int(subprocess.run(["ffprobe", "-v", "error", "-count_frames", "-select_streams", "v", "-show_entries",
                                  "stream=nb_read_frames", "-of", "csv=p=0", str(out)], capture_output=True, text=True).stdout)
-    full = 54 + 84  # each clip minus its 0.2 s trim, at the 30 fps edit
+    full = 60 + 90  # each clip in full, at the 30 fps edit
     assert frames == (full if transition == "cut" else full - 15)  # one 0.5 s overlap
     assert mt.has_audio(out)
     out = mt.make_scenario(run, str(tmp_path / "end.mp4"), transition=transition, transition_seconds=0.5,
