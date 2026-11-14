@@ -9,12 +9,13 @@ const STILL_ORDER = ["finish", "hires", "IL"];  // best upscale first; a ✓'d p
 type Pair = { id: number; still?: string; clip?: string };
 
 /** The approved (✓ on the Board) still and clip a stage would be exported with: the best approved upscale, and the approved
- *  interpolated clip, else the approved clip made from that still, else any approved clip. */
+ *  cut clip if the stage has one (the board's Cut phase), else the approved interpolated clip, else the approved clip made from
+ *  that still, else any approved clip. */
 function pairOf(p: Project, id: number): Pair {
   const s = p.config.stages.find((st) => st.id === id)!;
   const still = STILL_ORDER.find((f) => p.folders[f]?.stills[id] && doneIn(s, f));
   const withClip = (f?: string) => (f !== undefined && p.folders[f]?.clips[id] && doneIn(s, clipKey(f)) ? f : undefined);
-  const clip = withClip("interp") ?? withClip(still) ?? Object.keys(p.folders).find((f) => withClip(f) !== undefined);
+  const clip = (p.folders.cut?.clips[id] ? "cut" : undefined) ?? withClip("interp") ?? withClip(still) ?? Object.keys(p.folders).find((f) => withClip(f) !== undefined);
   return { id, still, clip };
 }
 
