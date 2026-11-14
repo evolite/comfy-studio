@@ -27,7 +27,7 @@ READY_TIMEOUT = 900  # a fresh pod: image pull + the template's boot on the volu
 # cold starts usually take 1-4 min but some hosts pull slowly, so only one silent past 15 is taken as stuck and deleted
 GPU_RETRY_S = 30  # how often _create_waiting asks RunPod again while no GPU is free
 WAKE = config.LOGS_DIR / "runpod_wake"  # touched when a pod is created or deleted: status() in other processes re-asks at once
-STATUS_TTL = {"up": 10, "down": 300, "limited": 900}  # status() caches the pod list: the ⚙ page and the KDE widget poll it all
+STATUS_TTL = {"up": 10, "down": 300, "limited": 900, "minute": 60}  # status() caches the pod list: the ⚙ page and the KDE widget poll it all
 # day, and RunPod's REST API has a daily rate limit (429) that a 10 s poll with no pod used up on its own
 
 
@@ -299,14 +299,15 @@ _cache = {"t": 0.0, "ttl": 0.0, "pod": None, "err": None}
 
 def _find_cached():
     """find() for the pollers, at most every STATUS_TTL: 10 s while a pod exists, 5 min while none (a create or delete anywhere
-    touches WAKE, which ends the wait), 15 min after a 429."""
+    touches WAKE, which ends the wait), 15 min after a daily-limit 429, 1 min after a per-minute one."""
     now = time.time()
     if now - _cache["t"] > _cache["ttl"] or _wake_t() > _cache["t"]:
         try:
             pod = find()
             _cache.update(pod=pod, err=None, ttl=STATUS_TTL["up" if pod else "down"])
         except PodError as e:
-            _cache.update(pod=None, err=e, ttl=STATUS_TTL["limited" if ": 429 " in str(e) else "up"])
+            limit = "minute" if "minute window" in str(e) else "limited"
+            _cache.update(pod=None, err=e, ttl=STATUS_TTL[limit if ": 429 " in str(e) else "up"])
         _cache["t"] = now
     if _cache["err"]:
         raise _cache["err"]
