@@ -5,6 +5,7 @@ import { Active, activeByStage, fmtSecs, pendingTakes, useAnimateBatchAdd, useAn
 import { previewTakes, setPreviewTakes, useBatchArmed, useBoardCols, useHiddenActions, usePreviewTakes } from "./runPrefs";
 import StageDrawer from "./StageDrawer";
 import Versions from "./Versions";
+import CutEditor from "./CutEditor";
 import Lightbox, { LightboxItem } from "./Lightbox";
 import { copyRef, RefChip, refOf } from "./controls";
 
@@ -45,17 +46,19 @@ function loadSeen(project: string): Seen {
   return fresh;
 }
 
-type Phase = "preview" | "upscale" | "finish" | "animate" | "interp" | "all";
+type Phase = "preview" | "upscale" | "finish" | "animate" | "interp" | "cut" | "all";
 const PHASES: { id: Phase; n: string; label: string; tip: string }[] = [
   { id: "preview", n: "①", label: "Preview", tip: "Check poses in the Krea2 previews and ✓ the ones that are good" },
   { id: "upscale", n: "②", label: "Upscale", tip: "Compare the IL / latent-upscale results against the preview and ✓ the chosen one" },
   { id: "finish", n: "③", label: "Finish", tip: "Optional: SeedVR on the ✓'d upscale; compare it against the upscale and ✓ it (skip straight to Animate if you don't need it)" },
   { id: "animate", n: "④", label: "Animate", tip: "Review the clips: ✓ approves, Re-roll renders a new one (← → move, d ✓, r re-roll, space play)" },
   { id: "interp", n: "⑤", label: "Interpolate", tip: "Optional: RIFE ×2 (24 → 48 fps) of the ✓'d clips into interp/videos/; compare against the source clip and ✓ it (← → move, d ✓, r redo, space play)" },
+  { id: "cut", n: "⑥", label: "Cut", tip: "Optional: trim each finished clip's start and end — drag the in/out handles (i / o at the playhead, ← → one frame, space play) and Save cut → cut/videos/ (the source clip stays); ✓ the cut" },
   { id: "all", n: "", label: "All files", tip: "Every folder's stills and clips at once" },
 ];
 const CIVITAI_FOLDERS = new Set(["preview", "IL", "hires", "finish"]);  // the stills whose generation can be written out for Civitai
 const UP_TARGETS = ["IL", "hires"];  // the upscale results (a finish starts from one of them)
+const CUT = "cut";  // trimmed clips (video/cut_clip.py), made in the Cut phase
 const INTERP = "interp";  // where interpolated clips land (project.py interpolate): a clip-only folder, reviewed in the Interpolate phase
 const PREVIEW_GATED = new Set(["il_cloud", "local", "face", "face_local", "hires_local", "finish", "finish_local"]);  // steps that build on an approved preview
 /** Which still/clip slots a phase shows for each stage row. */
@@ -65,6 +68,7 @@ function wantSlot(phase: Phase, folder: string, f: string, kind: "still" | "clip
   if (phase === "upscale") return kind === "still" && (f === "preview" || f === folder);
   if (phase === "finish") return kind === "still" && (f === "finish" || UP_TARGETS.includes(f));  // the finish, plus the upscales it is made from
   if (phase === "interp") return kind === "clip" && (f === INTERP || f === clipFrom);  // the interpolated clip, plus the clip it was made from
+  if (phase === "cut") return kind === "clip" && f === CUT;  // the cut result; its source plays in the CutEditor
   return f === folder;  // animate: the source folder's clip, plus its still for reference
 }
 /** Re-running a step makes its ✓ and every ✓ downstream of it stale: returns which `done` entries to drop. */
@@ -316,6 +320,7 @@ function phaseFolder(phase: Phase, upTarget: string, animFolder: string): string
   if (phase === "upscale") return upTarget;
   if (phase === "finish") return "finish";
   if (phase === "interp") return INTERP;
+  if (phase === "cut") return CUT;
   return animFolder;
 }
 
@@ -392,7 +397,7 @@ function PhaseBar({ name, phase, stages, notReady, onPhase }: { readonly name: s
           </button>
         );
       })}
-      <a className="phase link" href={`#/p/${name}/compose`} title="Cut the approved stills or clips to the music">⑥ Compose ›</a>
+      <a className="phase link" href={`#/p/${name}/compose`} title="Cut the approved stills or clips to the music">⑦ Compose ›</a>
       {notReady > 0 && (isUpscaleStep(phase) || isReview(phase)) && <span className="dim" title={`${notReady} stage${notReady > 1 ? "s" : ""} not at this step yet (previous step not ✓)`}>⏳ {notReady}</span>}
     </div>
   );
@@ -462,7 +467,7 @@ export default function Board({ name }: { readonly name: string }) {
   const pickUpTarget = (f: string) => { setUpTarget(f); store(`upTarget:${name}`, f); };
   const folder = phaseFolder(phase, upTarget, animFolder);
   // what ✓ means here: a still folder name, or `<folder>/videos` when reviewing clips
-  const doneKey = isReview(phase) ? clipKey(folder) : folder;
+  const doneKey = isReview(phase) || phase === "cut" ? clipKey(folder) : folder;
   const [drawer, setDrawer] = useState<number | null>(null);
   const [dragging, setDragging] = useState<number | null>(null);
   const cols = useBoardCols();
@@ -804,6 +809,7 @@ function isOwnOutput(phase: Phase, f: string, kind: string) {
   if (phase === "finish") return f === "finish";
   if (phase === "animate") return kind === "clip";
   if (phase === "interp") return f === INTERP;
+  if (phase === "cut") return f === CUT;
   return true;
 }
 
@@ -845,6 +851,15 @@ function SlotFigure({ p, sid, slot, phase, doneKey, isNew, onOpen }: { readonly 
       <button className="btn sm reveal" title="open in folder" onClick={(e) => { e.stopPropagation(); void api(`/projects/${p.name}/reveal`, "POST", { path: slotPath(f, kind, sid) }); }}>📂</button>
     </figure>
   );
+}
+
+/** The Cut phase's editor on the stage's finished clip: the interpolated one when there is one, else the Animate folder's. */
+function CutSource({ p, sid, clipFrom }: { readonly p: Project; readonly sid: number; readonly clipFrom: string }) {
+  const qc = useQueryClient();
+  const f = p.folders[INTERP]?.clips[sid] ? INTERP : clipFrom;
+  const v = p.folders[f]?.clips[sid];
+  if (!v) return <div className="empty dim">no clip to cut yet — animate (and interpolate) first</div>;
+  return <CutEditor project={p.name} sid={sid} folder={f} v={v} fps={f === INTERP ? 48 : 24} onSaved={() => void qc.invalidateQueries({ queryKey: ["project", p.name] })} />;
 }
 
 /** Preview takes other than the current one: the 4 newest as thumbs beside the preview, the rest behind "+N". */
@@ -1022,6 +1037,7 @@ function StageRow({ p, s, seen, onSeen, folder, clipFrom, phase, doneKey, cur, o
         ))}
         {showTakes && <TakeStrip p={p} sid={s.id} others={others} seenAt={takeSeen} pending={pendingTakes} onOpen={onOpenTake} onUse={onUseTake} />}
         {phase === "all" && <PeekFigure p={p} sid={s.id} />}
+        {phase === "cut" && <CutSource p={p} sid={s.id} clipFrom={clipFrom} />}
       </div>
       {versions && <Versions p={p} sid={s.id} first={review ? clipFrom : folder} onClose={() => setVersions(false)} />}
       <PromptPeek s={s} onEdit={onEdit} />
@@ -1038,6 +1054,7 @@ function readyFor(s: Stage, phase: Phase, folder: string, animFolder: string, ac
   if (phase === "finish") return UP_TARGETS.some((f) => doneIn(s, f)) || has(s, "finish", "stills");
   if (phase === "animate") return doneIn(s, folder) || has(s, folder, "clips");
   if (phase === "interp") return doneIn(s, clipKey(animFolder)) || has(s, INTERP, "clips") || active[s.id]?.action === "animate_rife";
+  if (phase === "cut") return has(s, INTERP, "clips") || has(s, animFolder, "clips") || has(s, CUT, "clips");
   return true;
 }
 
@@ -1048,5 +1065,6 @@ function phaseStatCount(allStages: Stage[], ph: Phase) {
   if (ph === "finish") return allStages.filter((s) => doneIn(s, "finish")).length;
   if (ph === "animate") return allStages.filter(anyClipDone).length;
   if (ph === "interp") return allStages.filter((s) => doneIn(s, clipKey(INTERP))).length;
+  if (ph === "cut") return allStages.filter((s) => doneIn(s, clipKey(CUT))).length;
   return 0;
 }

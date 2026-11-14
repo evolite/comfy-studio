@@ -15,6 +15,8 @@ type Progress = { done: number; total: number };
 type EditFile = { name: string; mtime: number; size: number; folder?: string | null };
 let keySeq = 0;
 const TRIM_START = 0.2;  // video/make_edit.py TRIM_START: seconds cut from a clip's start when no trim is set
+/** The start trim a clip gets when none is set: none for a cut/ clip (its in-point is already chosen, make_edit.trim_for). */
+const trimStart = (folder: string) => (folder === "cut" ? 0 : TRIM_START);
 
 const store = (key: string, v: unknown) => { try { localStorage.setItem(key, JSON.stringify(v)); } catch { /* storage unavailable */ } };
 function loadJson<T>(key: string, fallback: T): T {
@@ -246,8 +248,8 @@ function SourceCard({ p, mode, folder, sfolder, eligible, stillFolders, progress
 }
 
 /** One shot in the timeline: thumb, clip/still switch, audio mute, trims. */
-function Chip({ it, i, dragging, clip, thumb, canSwitch, audible, muted, trim, trimEnd, onDragStart, onDrop, onDrop_, onSwitch, onMute, onTrim, onTrimEnd }: {
-  readonly it: Item; readonly i: number; readonly dragging: boolean; readonly clip: boolean; readonly thumb: string; readonly canSwitch: boolean; readonly audible: boolean; readonly muted: boolean; readonly trim: string; readonly trimEnd: string;
+function Chip({ it, i, dragging, clip, thumb, canSwitch, audible, muted, trim, trimEnd, trimDefault, onDragStart, onDrop, onDrop_, onSwitch, onMute, onTrim, onTrimEnd }: {
+  readonly it: Item; readonly i: number; readonly dragging: boolean; readonly clip: boolean; readonly thumb: string; readonly canSwitch: boolean; readonly audible: boolean; readonly muted: boolean; readonly trim: string; readonly trimEnd: string; readonly trimDefault: number;
   readonly onDragStart: () => void; readonly onDrop: () => void; readonly onDrop_: () => void; readonly onSwitch: () => void; readonly onMute: () => void; readonly onTrim: (v: string) => void; readonly onTrimEnd: (v: string) => void;
 }) {
   const icon = clip ? "🎞" : "🖼";
@@ -266,8 +268,8 @@ function Chip({ it, i, dragging, clip, thumb, canSwitch, audible, muted, trim, t
           : <span className="chip-kind">{icon}</span>}
         {audible && <button className={`chip-t${muted ? " off" : ""}`} title={muted ? "clip audio muted — click to include" : "clip audio on — click to mute"} onClick={stop(onMute)}>{muted ? "🔇" : "🔊"}</button>}
       </div>
-      {clip && <div className="chip-trim" title="seconds cut from the start (blank = 0.2) and the end (blank = 0) of this clip">
-        <label>in<input type="number" min={0} step={0.05} placeholder="0.2" value={trim} onChange={(e) => onTrim(e.target.value)} onClick={(e) => e.stopPropagation()} draggable={false} /></label>
+      {clip && <div className="chip-trim" title={`seconds cut from the start (blank = ${trimDefault}) and the end (blank = 0) of this clip`}>
+        <label>in<input type="number" min={0} step={0.05} placeholder={String(trimDefault)} value={trim} onChange={(e) => onTrim(e.target.value)} onClick={(e) => e.stopPropagation()} draggable={false} /></label>
         <label>out<input type="number" min={0} step={0.05} placeholder="0" value={trimEnd} onChange={(e) => onTrimEnd(e.target.value)} onClick={(e) => e.stopPropagation()} draggable={false} /></label>
       </div>}
     </div>
@@ -582,7 +584,7 @@ export default function Compose({ name }: { readonly name: string }) {
     const a = [...items]; const [m] = a.splice(drag, 1); a.splice(to, 0, m); commit(a, true); setDrag(null);
   };
   const firstVoiced = items.find((i) => isClip(i.id) && !muted.includes(i.id) && fs?.clips?.[i.id]);
-  const voiceClip = firstVoiced && { url: fileUrl(name, folder, "clip", firstVoiced.id, fs!.clips[firstVoiced.id]), trim: Number(trims[firstVoiced.id] || TRIM_START) };
+  const voiceClip = firstVoiced && { url: fileUrl(name, folder, "clip", firstVoiced.id, fs!.clips[firstVoiced.id]), trim: Number(trims[firstVoiced.id] || trimStart(folder)) };
   const render = () => {
     run.mutate(editRequest({ folder, mode, items, isClip, sfolder, zoom, musicOn, beatSync, trims, trimsEnd, muted, music, opts, pol, cfolder }), {
       onSuccess: () => { const t = setInterval(() => qc.invalidateQueries({ queryKey: ["project", name] }), 3000); setTimeout(() => clearInterval(t), 600000); },
@@ -609,7 +611,7 @@ export default function Compose({ name }: { readonly name: string }) {
         </div>
         <div className="strip">
           {items.map((it, i) => (
-            <Chip key={it.key} it={it} i={i} dragging={drag === i} clip={isClip(it.id)} thumb={thumb(it.id)} canSwitch={canSwitch(it.id)}
+            <Chip key={it.key} trimDefault={trimStart(folder)} it={it} i={i} dragging={drag === i} clip={isClip(it.id)} thumb={thumb(it.id)} canSwitch={canSwitch(it.id)}
               audible={isClip(it.id)} muted={muted.includes(it.id)} trim={trims[it.id] ?? ""} trimEnd={trimsEnd[it.id] ?? ""}
               onDragStart={() => setDrag(i)} onDrop={() => reorder(i)} onDrop_={() => commit(items.filter((x) => x.key !== it.key))}
               onSwitch={() => setKind(it.id, isClip(it.id) ? "still" : "clip")} onMute={() => toggleMute(it.id)} onTrim={(v) => setTrim(it.id, v)} onTrimEnd={(v) => setTrimEnd(it.id, v)} />

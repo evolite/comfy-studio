@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT / "pipeline"))
 sys.path.insert(0, str(ROOT / "video"))
 import animate_pipeline  # noqa: E402
 import interpolate  # noqa: E402
+import cut_clip  # noqa: E402
 import make_edit  # noqa: E402
 import graph_settings  # noqa: E402
 import steps  # noqa: E402
@@ -484,6 +485,31 @@ def restore(name, sid, file):
         return hist.restore(project_dir(name), sid, file)
     except FileNotFoundError as e:
         raise ApiError(str(e), 404)
+
+
+def cut_info(name, sid):
+    """The stage's last cut ({folder, start, end}) for the Cut editor, or {}."""
+    return cut_clip.info(project_dir(name), sid) or {}
+
+
+def cut(name, sid, folder, start, end):
+    """Trim <folder>/videos/stage_<sid>.mp4 to [start, end] s into cut/videos/ (video/cut_clip.py)."""
+    d = project_dir(name).resolve()
+    base = (d / folder).resolve() if folder else d
+    if folder == cut_clip.FOLDER or (base != d and base.parent != d):
+        raise ApiError("bad folder")
+    src = base / "videos" / f"stage_{sid}.mp4"
+    if not src.is_file():
+        raise ApiError("no such clip", 404)
+    try:
+        start, end = float(start), float(end)
+    except (TypeError, ValueError):
+        raise ApiError("start and end must be seconds")
+    length = make_edit.clip_duration.__wrapped__(src)  # uncached: a re-animate replaces the file under the same path
+    if not 0 <= start < end <= length + 0.05 or end - start < cut_clip.MIN_SECONDS:
+        raise ApiError(f"need 0 <= start < end <= {length:.2f} and at least {cut_clip.MIN_SECONDS}s kept")
+    cut_clip.cut(d, sid, folder, start, min(end, length))
+    return cut_info(name, sid)
 
 
 def remove_result(name, sid, folder, kind):

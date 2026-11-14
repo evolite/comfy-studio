@@ -539,6 +539,17 @@ def project_finished(name: str, body: dict = Body(...)):
     return {"finished": done, "cleanup": freed}
 
 
+@app.get("/api/projects/{name}/stages/{sid}/cut")
+def cut_get(name: str, sid: int):
+    return P.cut_info(name, sid)
+
+
+@app.post("/api/projects/{name}/stages/{sid}/cut")
+def cut_post(name: str, sid: int, body: dict = Body(...)):
+    """Trim a finished clip's start/end into cut/videos/ (the board's Cut phase)."""
+    return P.cut(name, sid, body.get("folder", ""), body.get("start"), body.get("end"))
+
+
 @app.post("/api/projects/{name}/stages/{sid}/remove")
 def stage_remove(name: str, sid: int, body: dict = Body(...)):
     P.remove_result(name, sid, body.get("folder", ""), body.get("kind", ""))

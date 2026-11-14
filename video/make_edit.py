@@ -348,8 +348,10 @@ def build_collage(stills, frames, land_at, out_path, card_size):
 
 
 def trim_for(path):
+    """Seconds cut from a clip's start: its --trim, else TRIM_START -- 0 for a cut/ clip, whose in-point is already chosen."""
     stem = Path(path).stem
-    return TRIMS.get(int(stem[6:]), TRIM_START) if stem[6:].isdigit() else TRIM_START
+    default = 0.0 if Path(path).parent.parent.name == "cut" else TRIM_START
+    return TRIMS.get(int(stem[6:]), default) if stem[6:].isdigit() else default
 
 
 def trim_end_for(path):
