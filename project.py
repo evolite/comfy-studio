@@ -629,6 +629,8 @@ def space_warnings(d, s):
     if not argv or not s.get("krea_scene"):
         return []
     r = subprocess.run([*argv, "--text", "-"], input=s["krea_scene"], capture_output=True, text=True)
+    if r.returncode == 2:  # spacegraph rejected the space or the shot as impossible
+        return [" ".join(r.stdout.split())]
     return [ln[6:] for ln in r.stdout.splitlines() if ln.startswith("WARN  ")] or ([r.stderr.strip()] if r.returncode and r.stderr.strip() else [])
 
 

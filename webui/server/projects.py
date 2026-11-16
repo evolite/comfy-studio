@@ -4,6 +4,7 @@ import math
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import threading
@@ -284,12 +285,25 @@ def graph_settings_keys():
         return set()
 
 
+def check_shot(name, shot, label):
+    """A `shot` must place a possible camera and subject in the project's space.json: spacegraph rejects the
+    impossible ones (camera inside furniture, subject inside the bed without `on`, ...)."""
+    space = project_dir(name) / "space.json"
+    exe = shutil.which("spacegraph")
+    if not shot or not space.is_file() or not exe:
+        return
+    r = subprocess.run([exe, "view", str(space), "--shot-json", json.dumps(shot), "--json"], capture_output=True, text=True, timeout=30)
+    if r.returncode:
+        raise ApiError(f"{label}: {(r.stdout or r.stderr).strip().removeprefix('REJECTED').strip()}")
+
+
 @locked
 def patch_stage(name, sid, patch):
     cfg = load(name)
     for pos, s in enumerate(cfg["stages"], 1):
         if s.get("id", pos) == sid:
             validate_stage(patch, f"stage {sid}")
+            check_shot(name, patch.get("shot"), f"stage {sid}")
             for k, v in patch.items():
                 if v is None or v is False or (k == "done" and not v) or v == "" and k not in ("krea_scene", "il_scene", "motion"):
                     s.pop(k, None)
