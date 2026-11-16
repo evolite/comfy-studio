@@ -1,6 +1,7 @@
 """The RunPod pod `animate` renders on when the ⚙ animate target is "runpod": one pod, found by NAME, created on demand on the
 network volume runpod/seed.py filled (ComfyUI + the H3 models under their Comfy Cloud names, so animate graphs run unmapped)
-and terminated, never stopped, when done. REST v1 (https://rest.runpod.io/v1), key RUNPOD_API_KEY.
+and terminated, never stopped, when done. REST v2 (https://api.runpod.io/v2), key RUNPOD_API_KEY; balance() stays on GraphQL
+(v2's /account has no balance or spend).
 
 Lifecycle: ensure_up() reuses a RUNNING pod or creates one (the first of config.RUNPOD_GPUS with stock in RUNPOD_DATACENTER, SECURE cloud, the volume at
 /workspace, 8188/http) and waits until ComfyUI answers through the RunPod proxy. The pod's start command is runpod/watchdog.sh,
@@ -18,7 +19,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # repo root: config.py
 import config  # noqa: E402
 
-API = "https://rest.runpod.io/v1"
+API = "https://api.runpod.io/v2"
+ALIVE = {"PROVISIONING", "STARTING", "RUNNING"}  # v2 pod status while it is (or is becoming) up; v1 said desiredStatus RUNNING for all three
+STOCK = {"HIGH", "MEDIUM", "LOW"}  # catalog availability worth a create; NONE (or absent) is not tried
 NAME = "comfy-studio-animate"
 WATCHDOG = config.ROOT / "runpod" / "watchdog.sh"
 STARTS = config.LOGS_DIR / "runpod_starts.json"  # pods the studio started, newest last: boot seconds, first (cold) and second clip,
@@ -55,6 +58,7 @@ def _api(path, body=None, method="GET"):
     return json.loads(raw) if raw.strip() else None
 
 
+# rp-migrate: keep-v1 start (v2 has no account balance or spend)
 def balance() -> dict:
     """For the header chip when the animate target is runpod: the account's balance ($) and what it spends per hour right now
     (pods + volumes). Only RunPod's GraphQL API has these."""
@@ -68,6 +72,7 @@ def balance() -> dict:
     except (OSError, ValueError, KeyError, TypeError) as e:
         raise PodError(f"RunPod balance unavailable ({e})") from e
     return {"balance": me["clientBalance"], "spend_per_hr": me["currentSpendPerHr"]}
+# rp-migrate: keep-v1 end
 
 
 def url(pod_id: str) -> str:
@@ -75,8 +80,8 @@ def url(pod_id: str) -> str:
 
 
 def find():
-    """Our pod (any state but terminated), or None; with its machine, which carries the GPU it got (gpu_name)."""
-    return next((p for p in _api("/pods?includeMachine=true") if p.get("name") == NAME and p.get("desiredStatus") != "TERMINATED"), None)
+    """Our pod (any state but terminated), or None."""
+    return next((p for p in _api("/pods")["pods"] if p.get("name") == NAME and p.get("status") != "TERMINATED"), None)  # rp-migrate: ignore (API is v2)
 
 
 def answers(server: str) -> bool:
@@ -99,9 +104,8 @@ def _fetch_files() -> str:
 
 
 def create(gpus=None) -> dict:
-    """A new pod on the first of RUNPOD_GPUS with stock. RunPod's custom priority alone handed out PRO 4500s while 6000s were
-    listed first, so the 96 GB cards (RUNPOD_BIG_GPUS) are asked for on their own first and the full list only when none is free.
-    RunPod answers 400 when none has any in the data center, which is said plainly (no fallback to the cloud)."""
+    """A new pod on the first of RUNPOD_GPUS with stock. The 96 GB cards (RUNPOD_BIG_GPUS) are asked for on their own first and
+    the full list only when none is free. None free in the data center is said plainly (no fallback to the cloud)."""
     if not config.RUNPOD_VOLUME_ID:
         raise PodError("RUNPOD_VOLUME_ID is not set: add it to .env")
     if not config.RUNPOD_DATACENTER:
@@ -116,29 +120,40 @@ def create(gpus=None) -> dict:
                 raise
 
 
+def _stock(gpus) -> list:
+    """The GPU types in `gpus` with any stock in RUNPOD_DATACENTER, in list order (the list is the preference)."""
+    cat = _api("/catalog/gpus?include=AVAILABILITY&product=POD&cloud=SECURE&count=1")["gpus"]
+    level = {g["id"]: next((d.get("availability") for d in g.get("dataCenters", []) if d.get("id") == config.RUNPOD_DATACENTER), None)
+             for g in cat}
+    return [g for g in gpus if level.get(g) in STOCK]
+
+
 def _post(gpus) -> dict:
-    body = {"name": NAME, "imageName": config.RUNPOD_IMAGE, "cloudType": "SECURE", "computeType": "GPU", "gpuCount": 1,
-            "gpuTypeIds": gpus, "gpuTypePriority": "custom", "dataCenterIds": [config.RUNPOD_DATACENTER], "networkVolumeId": config.RUNPOD_VOLUME_ID,
-            "volumeMountPath": "/workspace", "ports": ["8188/http"],
-            "dockerEntrypoint": ["/bin/bash", "-c"], "dockerStartCmd": [WATCHDOG.read_text()],
+    """v2 rents one GPU type per pod: try the stocked ones in turn. A 4xx other than capacity (bad body, auth) is raised at once."""
+    body = {"name": NAME, "image": config.RUNPOD_IMAGE, "cloud": "SECURE",
+            "dataCenterIds": [config.RUNPOD_DATACENTER], "mounts": {"network": [{"volumeId": config.RUNPOD_VOLUME_ID, "path": "/workspace"}]},
+            "ports": ["8188/http"], "entrypoint": ["/bin/bash", "-c"], "cmd": [WATCHDOG.read_text()],
             "env": {"IDLE_SECONDS": str(round(config.RUNPOD_IDLE_MINUTES * 60)),
                     "BOOT_SECONDS": str(READY_TIMEOUT + 120),  # the watchdog's own boot limit: past ours, so we delete it first
                     "FETCH_FILES": _fetch_files()}}
-    try:
-        pod = _api("/pods", body, "POST")
-    except PodError as e:
-        if "no longer any instances available" in str(e) or "no instances" in str(e).lower():
-            raise NoGpu(f"RunPod has none of the RUNPOD_GPUS free in {config.RUNPOD_DATACENTER} right now: try again later, "
-                           f"or switch the ⚙ animate target to cloud") from e
-        raise
-    _wake()
-    return pod
+    last = "the catalog lists none in stock"
+    for gpu in _stock(gpus):
+        try:
+            pod = _api("/pods", {**body, "gpu": {"id": gpu, "count": 1}}, "POST")  # rp-migrate: ignore (API is v2)
+        except PodError as e:
+            if any(f": {c} " in str(e) for c in (401, 403, 413, 422)):
+                raise
+            last = f"{gpu}: {e}"
+            continue
+        _wake()
+        return pod
+    raise NoGpu(f"RunPod has none of the RUNPOD_GPUS free in {config.RUNPOD_DATACENTER} right now ({last[:200]}): try again later, "
+                f"or switch the ⚙ animate target to cloud")
 
 
 def gpu_name(pod: dict) -> str:
     """The GPU the pod actually got (RUNPOD_GPUS is a list)."""
-    g = pod.get("gpu") or {}
-    return g.get("displayName") or g.get("id") or (pod.get("machine") or {}).get("gpuTypeId") or "?"
+    return (pod.get("gpu") or {}).get("id") or "?"
 
 
 def _starts() -> list:
@@ -207,15 +222,14 @@ def _create_waiting(log, gpus=None) -> dict:
 
 def _on(pod: dict, gpus) -> bool:
     """Did the pod get one of these GPU types?"""
-    g, m = pod.get("gpu") or {}, pod.get("machine") or {}
-    return bool({g.get("id"), g.get("displayName"), m.get("gpuTypeId")} & set(gpus))
+    return gpu_name(pod) in gpus
 
 
 def _reusable(pod, big, gpus, log):
     """The found pod if animate can use it: a stopped or dead leftover is terminated, and so is a small pod when the clip needs a
     96 GB GPU (the runpod lane runs one job at a time, so it has nothing of ours on it)."""
-    if pod and pod.get("desiredStatus") != "RUNNING":
-        log(f"terminating the leftover pod {pod['id']} ({pod.get('desiredStatus')})")
+    if pod and pod.get("status") not in ALIVE:
+        log(f"terminating the leftover pod {pod['id']} ({pod.get('status')})")
         terminate(pod["id"])
         return None
     if pod and big and not _on(pod, gpus):
@@ -235,13 +249,13 @@ def _wait_ready(pod, created, log) -> bool:
             raise PodError(f"pod {pod['id']}'s ComfyUI did not answer at {server} within {READY_TIMEOUT // 60} min, so it was deleted "
                            f"-- run again for a fresh pod")
         try:
-            desired = (_api(f"/pods/{pod['id']}") or {}).get("desiredStatus")
+            state = (_api(f"/pods/{pod['id']}") or {}).get("status")
         except PodError as e:  # find() can still list a pod its watchdog is deleting: that one is gone, so start a new one
             if created or ": 404 " not in str(e):
                 raise
             log(f"pod {pod['id']} is gone (its watchdog deleted it), starting a new one")
             return False
-        if desired != "RUNNING":
+        if state not in ALIVE:
             raise PodError(f"pod {pod['id']} stopped while booting -- see the RunPod console")
         if time.time() - said > 60:
             log(f"  still booting ({time.time() - boot:.0f}s)")
@@ -258,24 +272,24 @@ def ensure_up(log=print, big=False) -> str:
     gpus = config.RUNPOD_BIG_GPUS if big else config.RUNPOD_GPUS
     pod = _reusable(find(), big, gpus, log)
     if pod:
-        log(f"RunPod pod {pod['id']} is running on {gpu_name(pod)} (${pod.get('costPerHr', '?')}/hr)")
+        log(f"RunPod pod {pod['id']} is running on {gpu_name(pod)} (${pod.get('cost', '?')}/hr)")
     else:
         log(f"starting RunPod pod… (first free of {len(gpus)} {'96 GB ' if big else ''}Blackwell types, {config.RUNPOD_DATACENTER})")
         pod = _create_waiting(log, gpus)
         created = True
-        log(f"pod {pod['id']} created on {gpu_name(pod)} (${pod.get('costPerHr', '?')}/hr while up; it deletes itself after "
+        log(f"pod {pod['id']} created on {gpu_name(pod)} (${pod.get('cost', '?')}/hr while up; it deletes itself after "
             f"{config.RUNPOD_IDLE_MINUTES:g} min idle)")
     boot = time.time()
     if not _wait_ready(pod, created, log):
         return ensure_up(log, big)
     if created:
         _save_starts(_starts() + [{"t": round(t), "pod": pod["id"], "gpu": gpu_name(pod), "ready_s": round(time.time() - boot),
-                                    "cost_per_hr": pod.get("costPerHr"), "seen": round(time.time())}])
+                                    "cost_per_hr": pod.get("cost"), "seen": round(time.time())}])
     return url(pod["id"])
 
 
 def _started(s):
-    """lastStartedAt, as the API writes it ("2026-10-30 14:32:34.386 +0000 UTC"; the spec says ISO), as an aware datetime."""
+    """startedAt (ISO in v2; v1 wrote "2026-10-30 14:32:34.386 +0000 UTC") as an aware UTC datetime."""
     try:
         return datetime.fromisoformat(s[:19].replace("T", " ")).replace(tzinfo=timezone.utc)
     except (TypeError, ValueError):
@@ -320,13 +334,13 @@ def status() -> dict:
     pod = _find_cached()
     if not pod:
         return {"up": False, "gpu": "first free Blackwell: " + config.RUNPOD_GPUS[0], "last_start": last_start(), "last_run": last_run()}
-    started = _started(pod.get("lastStartedAt"))
-    running = pod.get("desiredStatus") == "RUNNING"
+    started = _started(pod.get("startedAt"))
+    running = pod.get("status") in ALIVE
     uptime = (datetime.now(timezone.utc) - started).total_seconds() if started and running else None
-    cost = pod.get("adjustedCostPerHr") or pod.get("costPerHr")
+    cost = pod.get("cost")
     if running:
         _seen(pod["id"], cost)
-    return {"up": running, "id": pod["id"], "state": pod.get("desiredStatus"), "ready": running and answers(url(pod["id"])),
+    return {"up": running, "id": pod["id"], "state": pod.get("status"), "ready": running and answers(url(pod["id"])),
             "uptime": uptime, "cost_per_hr": cost, "session_cost": uptime * cost / 3600 if uptime and cost else None,
             "gpu": gpu_name(pod), "url": url(pod["id"]), "last_start": last_start()}
 

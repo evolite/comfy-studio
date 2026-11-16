@@ -57,7 +57,7 @@ RUNPOD_DATACENTER = os.environ.get("RUNPOD_DATACENTER", "")  # where that volume
 # UNet (+ turbo LoRA) on the pod too. The ⚙ page's "Pod H3 model" wins over this (config.runpod_h3_unet())
 RUNPOD_H3_UNET = os.environ.get("RUNPOD_H3_UNET", "")
 STOCK_H3_UNET = "minimax_h3_fl2va_pruned_int8_convrot.safetensors"  # the template's UNet
-# REST gpuTypeIds, tried in this order: the RTX PRO 6000s first, asked for on their own (RUNPOD_BIG_GPUS; ~2.2x a PRO 4500 per clip,
+# GPU types (v2 gpu.id), tried in this order: the RTX PRO 6000s first, asked for on their own (RUNPOD_BIG_GPUS; ~2.2x a PRO 4500 per clip,
 # ~1.6x its cost per clip), then the full list: the
 # other Blackwells with >= 32 GB, cheapest first (H3's UNet is 21 GB; NVFP4 needs Blackwell), without the $6-8/hr B200/B300.
 # Comma-separated to override.

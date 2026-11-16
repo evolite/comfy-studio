@@ -29,7 +29,7 @@ while sleep 30; do
     elif (( $(date +%s) - since >= limit )); then
         echo "watchdog: idle for $(( limit / 60 )) min${up:+ after work}, deleting pod $RUNPOD_POD_ID"
         runpodctl pod delete "$RUNPOD_POD_ID" || runpodctl remove pod "$RUNPOD_POD_ID" \
-            || curl -sf -X DELETE -H "Authorization: Bearer $RUNPOD_API_KEY" "https://rest.runpod.io/v1/pods/$RUNPOD_POD_ID" \
+            || curl -sf -X DELETE -H "Authorization: Bearer $RUNPOD_API_KEY" "https://api.runpod.io/v2/pods/$RUNPOD_POD_ID" \
             || runpodctl pod stop "$RUNPOD_POD_ID" || runpodctl stop pod "$RUNPOD_POD_ID" \
             || echo "watchdog: could not delete or stop the pod, trying again in 30 s"
     fi
