@@ -58,7 +58,9 @@ Top-level `video_megapixels` (i2v clip size; template default 0.4 = 512x768 at 2
                                                      sides, objects, mirrors) and the stage's `shot` ({"space", "cam": [x, y, z], "look",
                                                      "fov", "aspect", "subject": {"at", "facing"}, "hide"}): frame placement, the subject's
                                                      sides, mirror contents, what is out of frame. Runs the `spacegraph` CLI
-                                                     (pipx install git+https://github.com/evolite/spacegraph); --map = a top-down map
+                                                     (pipx install git+https://github.com/evolite/spacegraph); --map = a top-down map;
+                                                     --check = warnings where the stage's krea_scene contradicts the view (out-of-frame
+                                                     objects named, wrong sides, an unmentioned mirror); `generate --dry-run` prints them too
 """
 import argparse
 import json
@@ -379,7 +381,12 @@ def regen_local(a):
 def cmd_generate(a):
     if a.target:
         a.local = a.target == "local"
-    d, _ = project(a.name)
+    d, cfg = project(a.name)
+    if a.dry_run:  # prose vs camera: advisory, never blocks
+        for n, s in by_id(cfg["stages"]).items():
+            if not a.stage or n in a.stage:
+                for w in space_warnings(d, s):
+                    print(f"  stage_{n}: space: {w}")
     if a.takes > 1 and not a.preview:
         sys.exit("--takes goes with --preview (several Krea2 previews per stage to choose from)")
     if a.face:
@@ -608,8 +615,25 @@ def cmd_show(a):
 SPACE_JSON = "space.json"  # a project's places, read through the spacegraph CLI
 
 
+def _space_argv(d, s, cmd):
+    """The spacegraph command for a stage's shot, or None when the project/stage has no space, shot or spacegraph."""
+    exe = shutil.which("spacegraph")
+    if not (exe and s.get("shot") and (d / SPACE_JSON).is_file()):
+        return None
+    return [exe, cmd, str(d / SPACE_JSON), "--shot-json", json.dumps(s["shot"])]
+
+
+def space_warnings(d, s):
+    """spacegraph check of the stage's krea_scene against its shot: a list of warnings ([] when consistent or unchecked)."""
+    argv = _space_argv(d, s, "check")
+    if not argv or not s.get("krea_scene"):
+        return []
+    r = subprocess.run([*argv, "--text", "-"], input=s["krea_scene"], capture_output=True, text=True)
+    return [ln[6:] for ln in r.stdout.splitlines() if ln.startswith("WARN  ")] or ([r.stderr.strip()] if r.returncode and r.stderr.strip() else [])
+
+
 def cmd_view(a):
-    """Stage N's `shot` placed in the project's space.json; prints spacegraph's report (or its map)."""
+    """Stage N's `shot` placed in the project's space.json; prints spacegraph's report (or its map, or the prose check)."""
     d, cfg = project(a.name)
     s = by_id(cfg["stages"]).get(a.stage)
     if s is None:
@@ -618,10 +642,13 @@ def cmd_view(a):
         sys.exit(f"{a.name}: stage {a.stage} has no `shot` (set {{\"space\", \"cam\", \"look\", ...}} on it first)")
     if not (d / SPACE_JSON).is_file():
         sys.exit(f"{a.name}: no {SPACE_JSON} in {d}")
-    exe = shutil.which("spacegraph")
-    if not exe:
+    if not shutil.which("spacegraph"):
         sys.exit("spacegraph not found: pipx install git+https://github.com/evolite/spacegraph")
-    argv = [exe, "map" if a.map else "view", str(d / SPACE_JSON), "--shot-json", json.dumps(s["shot"]), *(["--json"] if a.json and not a.map else [])]
+    if a.check:
+        warns = space_warnings(d, s)
+        print("\n".join(f"WARN  {w}" for w in warns) if warns else "OK  the krea_scene agrees with the shot")
+        sys.exit(1 if warns else 0)
+    argv = _space_argv(d, s, "map" if a.map else "view") + (["--json"] if a.json and not a.map else [])
     sys.exit(subprocess.run(argv).returncode)
 
 
@@ -641,6 +668,7 @@ def main():
     p.add_argument("stage", type=int)
     p.add_argument("--map", action="store_true", help="a top-down map of the space with the camera and subject")
     p.add_argument("--json", action="store_true", help="the raw view as JSON")
+    p.add_argument("--check", action="store_true", help="warnings where the stage's krea_scene contradicts its shot")
     p = add("new", cmd_new)
     p.add_argument("--engine", choices=run_pipeline.ENGINES, default="full")
     p.add_argument("--oneoff", action="store_true", help="single-stage project shown in the web UI's One-offs tab")
