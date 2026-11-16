@@ -121,8 +121,14 @@ def create(gpus=None) -> dict:
 
 
 def _stock(gpus) -> list:
-    """The GPU types in `gpus` with any stock in RUNPOD_DATACENTER, in list order (the list is the preference)."""
-    cat = _api("/catalog/gpus?include=AVAILABILITY&product=POD&cloud=SECURE&count=1")["gpus"]
+    """The GPU types in `gpus` with any stock in RUNPOD_DATACENTER, in list order (the list is the preference). When the catalog
+    itself fails (RunPod answers 500s at times) every type is tried, as v1 did."""
+    try:
+        cat = _api("/catalog/gpus?include=AVAILABILITY&product=POD&cloud=SECURE&count=1")["gpus"]
+    except PodError as e:
+        if not any(f": {c} " in str(e) for c in (429, 500, 502, 503, 504)) and "can't reach" not in str(e):
+            raise
+        return list(gpus)
     level = {g["id"]: next((d.get("availability") for d in g.get("dataCenters", []) if d.get("id") == config.RUNPOD_DATACENTER), None)
              for g in cat}
     return [g for g in gpus if level.get(g) in STOCK]
