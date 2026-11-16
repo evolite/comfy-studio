@@ -3,7 +3,7 @@ says where its input comes from and where its result goes; which target runs it 
 business (runner.py), not the step's.
 
     preview   Krea2 base render only                                  -> preview/
-    il        IL + upscale + finish on a Krea2 preview                 -> IL/
+    il        IL + upscale + finish on a Krea2 preview (bgswap: its IL background + composite) -> IL/
     face      IL FaceDetailer on an IL image (replaces it)             -> IL/ (rendered in _debug/face first)
     hires     latent upscale + Krea2 re-diffusion of a preview (local) -> hires/
     finish    SeedVR2 upscale of an upscale result (hires/ or IL/)     -> finish/
@@ -44,10 +44,15 @@ def preview_engine(engine):
 
 
 def replace_krea(graph: dict, image_name: str) -> dict:
-    """The full-engine graph with its Krea2 nodes (30:*, 49) replaced by LoadImage(image_name), so IL + upscale + finish
-    start from an existing still."""
-    g = {k: v for k, v in graph.items() if not k.startswith("30:") and k != "49"}
+    """The graph with its Krea2 render (30:8 and everything it depends on) replaced by LoadImage(image_name), so the rest
+    (full: IL + upscale + finish; bgswap: matte, IL background, composite, upscale) starts from an existing still. A size
+    node the rest still reads (bgswap's 49) becomes that image's size."""
+    gen = set(preview_graph(graph)) - {"436"}
+    g = {k: v for k, v in graph.items() if k not in gen}
     g["29"] = {"class_type": "LoadImage", "inputs": {"image": image_name}}
+    used = {v[0] for node in g.values() for v in node["inputs"].values() if isinstance(v, list)}
+    if "49" in gen and "49" in used:
+        g["49"] = {"class_type": "GetImageSize+", "inputs": {"image": ["29", 0]}}  # width, height: the same outputs as 49
     for node in g.values():
         for k, v in node["inputs"].items():
             if isinstance(v, list) and v[0] == "30:8":
@@ -117,13 +122,21 @@ def finish_source(ctx, n):
     return next((f for f in picked if f in have), have[0] if have else UPSCALES[0])
 
 
+def il_source(ctx, n):
+    """Where stage n's IL pass starts: the Krea2 preview; bgswap takes the latent upscale (hires/) when there is one, so the
+    pasted-back people keep its detail (set `upscale_factor` 1 to keep that size)."""
+    if ctx.engine.__name__.endswith("bgswap") and (ctx.d / "hires" / f"stage_{n}.png").exists():
+        return "hires"
+    return "preview"
+
+
 STEPS = {s.name: s for s in [
     Step("main", "", lambda c, s, i, t: stage_graph(c.engine, s, c.common),
          lambda c: (c.engine.FINAL_IMAGE_NODE, c.engine.NODE_LABELS), targets=("cloud",)),
     Step("preview", "preview", lambda c, s, i, t: stage_graph(preview_engine(c.engine), s, c.common),
          lambda c: ("436", {"436": "final"}), suffix="krea2", takes=True),
     Step("il", "IL", lambda c, s, i, t: replace_krea(stage_graph(c.engine, s, c.common), i),
-         lambda c: (c.engine.FINAL_IMAGE_NODE, c.engine.NODE_LABELS), needs="preview", engines=("full",),
+         lambda c: (c.engine.FINAL_IMAGE_NODE, c.engine.NODE_LABELS), needs=il_source, engines=("full", "bgswap"),
          needs_hint="make the Krea2 base first: project.py {name} generate {stages} --preview"),
     Step("face", "_debug/face", lambda c, s, i, t: stage_graph(face_engine, {**s, "_image": i}, c.common),
          lambda c: (face_engine.FINAL_IMAGE_NODE, face_engine.NODE_LABELS), needs="IL", suffix="face",
