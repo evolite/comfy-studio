@@ -65,16 +65,20 @@ def test_takes_are_kept_round_robin_with_fresh_seeds_and_the_first_is_current(fa
         assert {r["delta"] for r in rows if not r["current"]} == {"seed only"}  # same prompt and settings, only the noise differs
 
 
-def test_every_new_take_becomes_current_and_displacing_one_resets_its_done(fake, proj):
+def test_every_new_take_becomes_current_and_clears_every_done(fake, proj):
     preview(fake, proj, [1])
     first = takes.current_id(proj.d, 1)
-    proj.stages[1]["done"] = ["preview", "il"]
+    assert json.loads((proj.d / "project.json").read_text())["stages"][0].get("done") is None  # a render is never ✓'d for you
+    pj = proj.d / "project.json"
+    cfg = json.loads(pj.read_text())
+    cfg["stages"][0]["done"] = ["preview", "IL", "hires"]
+    pj.write_text(json.dumps(cfg))
     preview(fake, proj, [1], k=2)
     rows = takes.listing(proj.d, 1)
     assert len(rows) == 3
     assert takes.current_id(proj.d, 1) != first  # every new render becomes current, even with the preview ✓'d
     done = json.loads((proj.d / "project.json").read_text())["stages"][0].get("done")
-    assert done == ["preview"]  # a different take took over: everything made from the old one lost its ✓
+    assert done is None  # a re-render rejects the old preview: its ✓ and everything made from it are gone
 
 
 def test_one_failed_take_does_not_fail_the_stage(fake, proj, monkeypatch, capsys):

@@ -78,9 +78,8 @@ def _collect_one(ctx, step, needs, out, j, got, target_name: str) -> None:
     if step.takes:
         takes_mod.sync(ctx.d, j.n)
         rec = takes_mod.record(j.graph, j.stage, ctx.common, target_name, image_loras.resolve(j.stage.get("loras")))
-        before = takes_mod.current_id(ctx.d, j.n)
-        tid = takes_mod.add(ctx.d, j.n, j.final, j.graph, rec, make_current=True)
-        takes_mod.approve(ctx.d, j.n, changed=before != tid)
+        takes_mod.add(ctx.d, j.n, j.final, j.graph, rec, make_current=True)
+        takes_mod.clear_done(ctx.d, j.n)
     else:
         history.archive(ctx.d, dest)  # the result it replaces stays restorable (web UI: ⋯ > Previous versions)
         shutil.copyfile(j.final, dest)

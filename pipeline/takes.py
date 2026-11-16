@@ -6,8 +6,8 @@
     preview/takes/stage_N/current           {"id", "size", "mtime_ns"} of the take copied to preview/stage_N.png
 
 preview/stage_N.png stays the one file every later step reads; it is a copy of the current take. Every new render
-becomes the current take as it lands (the previous current stays in the takes folder for comparison) and ✓s the
-preview; if that displaced a different take, everything made from the old one loses its ✓. If the file no longer
+becomes the current take as it lands (the previous current stays in the takes folder for comparison) and clears the
+stage's ✓s: a re-render means the old preview was rejected, so nothing made from it is approved any more. If the file no longer
 matches `current` (restored, imported) it is taken in as an `external` take; an untracked preview/stage_N.png (no takes
 yet) as a `legacy` take (no record).
 """
@@ -186,16 +186,14 @@ def listing(d: Path, n) -> list:
     return out
 
 
-def approve(d: Path, n, changed: bool) -> None:
-    """A new take just became current: ✓ the preview in project.json. If it displaced a different take, the ✓s of
-    everything made from the old one (IL, hires, finish…) no longer apply — done collapses back to the preview."""
+def clear_done(d: Path, n) -> None:
+    """A new take just became current: drop every ✓ of stage n in project.json, the preview's included."""
     p = d / "project.json"
     cfg = json.loads(p.read_text())
     for pos, s in enumerate(cfg.get("stages", []), 1):
         if s.get("id", pos) == n:
-            done = s.get("done") if isinstance(s.get("done"), list) else []
-            s["done"] = ["preview"] if changed else sorted(set(done) | {"preview"})
-            p.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
+            if s.pop("done", None) is not None:
+                p.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
             return
 
 

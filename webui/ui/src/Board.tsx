@@ -74,7 +74,7 @@ function wantSlot(phase: Phase, folder: string, f: string, kind: "still" | "clip
 /** Re-running a step makes its ✓ and every ✓ downstream of it stale: returns which `done` entries to drop. */
 function staleKeys(action: string, folder: string): (k: string) => boolean {
   const still = (...fs: string[]) => (k: string) => fs.includes(k) || fs.some((f) => k === clipKey(f));
-  if (action === "preview" || action === "preview_local") return () => false;  // a new take is only a candidate: picking it (Use this) clears what was made from the old one
+  if (action === "preview" || action === "preview_local") return () => false;  // the server clears every ✓ when the new take lands (it becomes current), not at submit: a failed render keeps them
   if (action === "local_new") return () => true;  // replaces the preview and the IL result
   if (["local", "il_cloud", "face", "face_local"].includes(action)) return still("IL", "finish");  // a finish may be made from IL/
   if (action === "hires_local") return still("hires", "finish");
