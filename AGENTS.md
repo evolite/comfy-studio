@@ -60,7 +60,7 @@ are merged per top-level key instead (`config.library_merged`). Web UI edits (Lo
 `{"engine", "seed"?, "video_engine"?, "voice"?, "settings": {...}, "stages": [...]}`. `settings` = run-wide tunables (keys in
 `pipeline/graph_settings.py`, unknown keys error); a stage can override any of them; a key absent everywhere takes the
 template's value. Each stage: stable `id` (names its `stage_N` files; gaps fine, order = array order), `krea_scene`,
-`il_scene`, `loras`, `motion`, `duration`, `video_loras`, optional `seed`/`video_seed`/`video_engine`/`voice`. LoRA
+`il_scene`, `loras`, `motion`, `duration`, `video_loras`, optional `seed`/`video_seed`/`video_engine`/`voice`/`shot`. LoRA
 triggers are appended automatically; a `voice` (stage, else project) fills the motion's `{voice}` slots; `voices` (`{"S2": name}`) gives another
 speaker its own for its `:S2` slots. A stage is
 self-contained: describe the character in every `krea_scene`. Past runs' `_debug/*/graph.json` hold the exact prompts,
@@ -80,7 +80,10 @@ seeds and settings used.
 
 No N = every stage missing that output; with N = redo those (the old file moves to `_debug/`). The web UI board has one phase
 per step. `status` prints a per-stage summary; `show [N..]` prints everything about those stages as JSON (what an agent reads
-for a web-UI ref `@<project>#<id>`).
+for a web-UI ref `@<project>#<id>`). `view N [--map]` places stage N's `shot` (camera, subject, hidden props) in the
+project's `space.json` (its places, written once) with [spacegraph](https://github.com/evolite/spacegraph) and prints what
+is in frame, where, which frame side the subject's right side is on, what mirrors show and what is out of frame: the facts a
+`krea_scene` background is written from.
 
 ## Animate + edit
 - **i2v model** = `video_engine` (project, a stage may override): `minimax` (MiniMax H3, default) or `ltx` (LTX 2.3 /

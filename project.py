@@ -54,6 +54,11 @@ Top-level `video_megapixels` (i2v clip size; template default 0.4 = 512x768 at 2
   python3 project.py <name> show [N...]             JSON of everything about those stages (no N: all): the stage, its outputs per
                                                      folder, preview takes, past runs' _debug graph.json paths;
                                                      what an agent reads for a web-UI ref `@<name>#N`
+  python3 project.py <name> view N [--map] [--json] what stage N's camera sees, from the project's space.json (the places: walls or open
+                                                     sides, objects, mirrors) and the stage's `shot` ({"space", "cam": [x, y, z], "look",
+                                                     "fov", "aspect", "subject": {"at", "facing"}, "hide"}): frame placement, the subject's
+                                                     sides, mirror contents, what is out of frame. Runs the `spacegraph` CLI
+                                                     (pipx install git+https://github.com/evolite/spacegraph); --map = a top-down map
 """
 import argparse
 import json
@@ -600,6 +605,26 @@ def cmd_show(a):
     print(json.dumps(out, indent=2, ensure_ascii=False))
 
 
+SPACE_JSON = "space.json"  # a project's places, read through the spacegraph CLI
+
+
+def cmd_view(a):
+    """Stage N's `shot` placed in the project's space.json; prints spacegraph's report (or its map)."""
+    d, cfg = project(a.name)
+    s = by_id(cfg["stages"]).get(a.stage)
+    if s is None:
+        sys.exit(f"{a.name}: no stage {a.stage}")
+    if not s.get("shot"):
+        sys.exit(f"{a.name}: stage {a.stage} has no `shot` (set {{\"space\", \"cam\", \"look\", ...}} on it first)")
+    if not (d / SPACE_JSON).is_file():
+        sys.exit(f"{a.name}: no {SPACE_JSON} in {d}")
+    exe = shutil.which("spacegraph")
+    if not exe:
+        sys.exit("spacegraph not found: pipx install git+https://github.com/evolite/spacegraph")
+    argv = [exe, "map" if a.map else "view", str(d / SPACE_JSON), "--shot-json", json.dumps(s["shot"]), *(["--json"] if a.json and not a.map else [])]
+    sys.exit(subprocess.run(argv).returncode)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("name")
@@ -612,6 +637,10 @@ def main():
 
     p = add("show", cmd_show)
     p.add_argument("stage", type=int, nargs="*")
+    p = add("view", cmd_view)
+    p.add_argument("stage", type=int)
+    p.add_argument("--map", action="store_true", help="a top-down map of the space with the camera and subject")
+    p.add_argument("--json", action="store_true", help="the raw view as JSON")
     p = add("new", cmd_new)
     p.add_argument("--engine", choices=run_pipeline.ENGINES, default="full")
     p.add_argument("--oneoff", action="store_true", help="single-stage project shown in the web UI's One-offs tab")

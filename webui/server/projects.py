@@ -29,7 +29,7 @@ import voice_registry  # noqa: E402
 
 TIERS = [1.0, 2.0, 2.9, 5.0]
 STAGE_FIELDS = {"krea_scene", "il_scene", "il_background", "motion", "duration", "loras", "video_loras", "video_engine", "audio", "seed", "video_seed",
-                "il_denoise", "face_detailer_enabled", "face_wildcard", "done", "voice", "voices"}
+                "il_denoise", "face_detailer_enabled", "face_wildcard", "done", "voice", "voices", "shot"}
 PREVIEW_GATED = {action for (step, _), (action, _) in steps.ACTION_IDS.items() if steps.STEPS[step].needs}  # steps that build on an approved preview (animate only needs its own source still)
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 PROJECT_JSON = "project.json"  # a project's config file, in the project dir
@@ -253,6 +253,9 @@ def validate_stage(patch, label):
     d = patch.get("duration")
     if d is not None and ("duration" in patch) and (isinstance(d, bool) or not isinstance(d, (int, float)) or not 1.0 <= d <= 15.0):
         raise ApiError(f"{label}: duration must be between 1.0 and 15.0 seconds")
+    shot = patch.get("shot")
+    if shot and not (isinstance(shot, dict) and isinstance(shot.get("cam"), list) and len(shot["cam"]) == 3):
+        raise ApiError(f"{label}: shot needs at least \"cam\": [x, y, z] (see `project.py <name> view`)")
     if patch.get("voice") and patch["voice"] not in voice_registry.load()["voices"]:
         raise ApiError(f"{label}: no voice {patch['voice']!r} in the voice library")
     try:
