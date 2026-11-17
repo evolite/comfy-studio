@@ -3,6 +3,9 @@
 Lanes: `cloud` (paid cloud jobs), `local` (local ComfyUI jobs) and `runpod` (animate on our RunPod pod, when that is the ⚙
 animate target) each run one job at a time (concurrent i2v submissions break the backend; one GPU locally and on the pod);
 `free` (edit, dry-run, new) runs immediately.
+
+A failed job in a lane (not `free`: its failures don't fix themselves) is submitted again RETRY_AFTER later, up to
+RETRY_TIMES times in a row (overnight: a RunPod GPU that isn't free, a cloud timeout); cancelling the failed job stops it.
 """
 import json
 import os
@@ -35,6 +38,7 @@ import steps  # noqa: E402
 EDIT_TIMING = config.LOGS_DIR / "edit_timing.json"
 FRAMES_RE = re.compile(r"total (\d+) frames")  # make_edit's plan line; scales the estimate when the edit is longer/shorter than the last
 EDIT_KINDS = ("beat", "nomusic")
+RETRY_AFTER, RETRY_TIMES = 30 * 60, 16  # seconds; 16 x 30 min = a night
 
 
 def send_pushover(title, message):
@@ -122,6 +126,8 @@ class Job:
         self.last_done = None  # when the latest stage finished: per_stage = (last_done - started) / finished stages
         self.frames = None  # edit jobs: frame count of the plan, once make_edit has printed it
         self.mem_freed = None  # why the local batch had to free memory first (memory check), else None
+        self.attempt = 1  # auto-retries count up from the job they retry
+        self.retry_at, self.retry_timer = None, None  # when this failed job is submitted again (None: it won't be)
         self.cloud_ids = []  # prompt ids this job submitted (Comfy Cloud, or the pod), so cancel can pull them off the remote queue
         self.cond = threading.Condition()
 
@@ -134,7 +140,8 @@ class Job:
         d = {"id": self.id, "project": self.project, "action": self.action, "cost": self.cost, "lane": self.lane,
              "status": self.status, "returncode": self.returncode, "stages": self.stage_status, "req": self.req,
              "created": self.created, "started": self.started, "ended": self.ended, "argv": " ".join(self.argv[2:]),
-             "last": self.lines[-1] if self.lines else "", "progress": self.progress(), "per_stage": self.per_stage(), "took": self.took, "mem_freed": self.mem_freed}
+             "last": self.lines[-1] if self.lines else "", "progress": self.progress(), "per_stage": self.per_stage(), "took": self.took, "mem_freed": self.mem_freed,
+             "attempt": self.attempt, "retry_at": self.retry_at}
         if with_lines:
             d["lines"] = self.lines
         return d
@@ -506,7 +513,28 @@ class Manager:
                 job.cond.notify_all()
             if lock:
                 lock.release()
+            self._schedule_retry(job)
             self._maybe_notify()
+
+    def _schedule_retry(self, job):
+        if job.status != "failed" or job.lane not in self.lane_locks or job.attempt > RETRY_TIMES:
+            return
+        job.retry_at = time.time() + RETRY_AFTER
+        job.emit(f"auto-retry at {time.strftime('%H:%M', time.localtime(job.retry_at))} (attempt {job.attempt + 1} of {RETRY_TIMES + 1})")
+        job.retry_timer = threading.Timer(RETRY_AFTER, self._auto_retry, args=(job,))
+        job.retry_timer.daemon = True
+        job.retry_timer.start()
+
+    def _auto_retry(self, job):
+        if job.retry_at is None:
+            return  # cancelled or retried by hand meanwhile
+        try:
+            new = self.retry(job.id)
+        except ApiError as e:  # e.g. the same request already queued again by hand
+            job.emit(f"auto-retry skipped: {e}")
+            return
+        new.attempt = job.attempt + 1
+        job.emit(f"auto-retried as {new.id}")
 
     @staticmethod
     def publish_edit(job):
@@ -530,7 +558,10 @@ class Manager:
         job = self.jobs.get(jid)
         if not job:
             raise ApiError("no such job", 404)
-        if job.status == "queued":
+        if job.retry_at is not None:  # a failed job waiting for its auto-retry: stop that
+            self._stop_retry(job)
+            job.emit("auto-retry cancelled")
+        elif job.status == "queued":
             job.status = "cancelled"
         elif job.status == "running" and job.proc:
             job.status = "cancelled"
@@ -542,6 +573,12 @@ class Manager:
         self._maybe_notify()
         return job
 
+    @staticmethod
+    def _stop_retry(job):
+        job.retry_at = None
+        if job.retry_timer:
+            job.retry_timer.cancel()
+
     def retry(self, jid):
         """Submit a failed/cancelled job again with the same request (argv rebuilt from today's settings). A job naming its
         stages only reruns the ones that didn't finish, so the stages it already rendered aren't paid for twice; with none
@@ -551,6 +588,7 @@ class Manager:
             raise ApiError("no such job", 404)
         if job.status not in ("failed", "cancelled"):
             raise ApiError(f"only a failed or cancelled job can be retried ({jid} is {job.status})", 400)
+        self._stop_retry(job)  # by hand, or the auto-retry itself: once
         req = dict(job.req)
         stages = [int(s) for s in req.get("stages") or ()]
         if stages and job.action != "edit":  # an edit's stages pick the clips of one cut: always all of them

@@ -83,7 +83,10 @@ export default function JobsPanel({ jobs, unseen, dismiss, onClose }: { readonly
                 {j.per_stage != null && <span className="pill" title="time per stage: wall clock from start to the last finished stage, divided by the stages (takes) finished, model loading included">⏱ {j.per_stage >= 60 ? `${Math.floor(j.per_stage / 60)}m ${Math.round(j.per_stage % 60)}s` : `${Math.round(j.per_stage)}s`}</span>}
                 {j.mem_freed && <span className="memwarn" title={`memory check: ${j.mem_freed} at the start, so ComfyUI was freed and the models reloaded`}>⚠</span>}
                 <i className={`badge ${j.cost}`}>{j.cost}</i>
+                {(j.attempt ?? 1) > 1 && <span className="pill" title="auto-retry of a failed job">try {j.attempt}</span>}
+                {j.retry_at && <span className="pill" title="failed: submitted again automatically at this time">↻ {new Date(j.retry_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>}
                 <span className="spacer" />
+                {j.retry_at && <button className="btn sm danger" title="stop the auto-retry" onClick={(e) => { e.stopPropagation(); void api(`/jobs/${j.id}/cancel`, "POST"); }}>⏹</button>}
                 {active(j) && <button className="btn sm danger" title="cancel this job" onClick={(e) => { e.stopPropagation(); void api(`/jobs/${j.id}/cancel`, "POST"); }}>⏹</button>}
                 {(j.status === "failed" || j.status === "cancelled") && <button className="btn sm" title={`retry: submit this job again${st.length && j.action !== "edit" ? " (only the stages that didn't finish)" : ""}${j.cost === "paid" ? " — spends credits" : ""}`} onClick={(e) => { e.stopPropagation(); void api<Job>(`/jobs/${j.id}/retry`, "POST").then((n) => setSel(n.id)); }}>↻</button>}
               </div>

@@ -23,6 +23,8 @@ export type Job = {
   per_stage?: number | null;  // wall-clock seconds per finished stage (take), loading included
   took?: Record<string, number>;  // per finished stage (stage id, or "N.tK" for a take): ComfyUI's processed seconds
   mem_freed?: string | null;  // the memory check freed ComfyUI before this local batch (why)
+  attempt?: number;  // 1, or which auto-retry of a failed job this is
+  retry_at?: number | null;  // a failed job: when it is submitted again (unix seconds), else null
 };
 export type Registry = {
   settings_keys: Record<string, string[]>; default_settings: Record<string, Record<string, unknown>>;
