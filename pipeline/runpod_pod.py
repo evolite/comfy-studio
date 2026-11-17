@@ -23,6 +23,7 @@ API = "https://api.runpod.io/v2"
 ALIVE = {"PROVISIONING", "STARTING", "RUNNING"}  # v2 pod status while it is (or is becoming) up; v1 said desiredStatus RUNNING for all three
 STOCK = {"HIGH", "MEDIUM", "LOW"}  # catalog availability worth a create; NONE (or absent) is not tried
 NAME = "comfy-studio-animate"
+CONTAINER_DISK_GB = 50  # the image's ComfyUI + pip cache; models are on the network volume
 WATCHDOG = config.ROOT / "runpod" / "watchdog.sh"
 STARTS = config.LOGS_DIR / "runpod_starts.json"  # pods the studio started, newest last: boot seconds, first (cold) and second clip,
 # $/hr and when status() last saw it up -- after it is gone that gives what the run cost (the billing API lags by hours)
@@ -135,8 +136,10 @@ def _stock(gpus) -> list:
 
 
 def _post(gpus) -> dict:
-    """v2 rents one GPU type per pod: try the stocked ones in turn. A 4xx other than capacity (bad body, auth) is raised at once."""
-    body = {"name": NAME, "image": config.RUNPOD_IMAGE, "cloud": "SECURE",
+    """v2 rents one GPU type per pod: try the stocked ones in turn. A 4xx other than capacity (bad body, auth) is raised at once.
+    `disk` is required in practice: v2 has no default (v1's was 50 GB), and without it every create fails with a capacity-looking
+    400 ("no longer any instances available") or "provide ... pod configuration parameters"."""
+    body = {"name": NAME, "image": config.RUNPOD_IMAGE, "cloud": "SECURE", "disk": CONTAINER_DISK_GB,
             "dataCenterIds": [config.RUNPOD_DATACENTER], "mounts": {"network": [{"volumeId": config.RUNPOD_VOLUME_ID, "path": "/workspace"}]},
             "ports": ["8188/http"], "entrypoint": ["/bin/bash", "-c"], "cmd": [WATCHDOG.read_text()],
             "env": {"IDLE_SECONDS": str(round(config.RUNPOD_IDLE_MINUTES * 60)),
@@ -147,8 +150,8 @@ def _post(gpus) -> dict:
         try:
             pod = _api("/pods", {**body, "gpu": {"id": gpu, "count": 1}}, "POST")  # rp-migrate: ignore (API is v2)
         except PodError as e:
-            if any(f": {c} " in str(e) for c in (401, 403, 413, 422)):
-                raise
+            if any(f": {c} " in str(e) for c in (401, 402, 403, 413, 422)) or (": 400 " in str(e) and "instances available" not in str(e)):
+                raise  # the request itself (or the account) is wrong: the next GPU type fails the same way
             last = f"{gpu}: {e}"
             continue
         _wake()
