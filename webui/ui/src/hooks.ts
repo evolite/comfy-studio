@@ -30,13 +30,12 @@ export function useJobs() {
   // a job that appears or changes status refreshes its project: on the way out so its results show, on the way in so useProject's
   // 3 s polling (decided after each fetch, so it stays off once a fetch found nothing running) starts for jobs submitted elsewhere
   // (auto-retries, the API, another tab)
-  const seen = useRef<Record<string, string> | null>(null);
+  // (also on first sight: the board's first fetch may come before the job list); only the open board's query actually refetches
+  const seen = useRef<Record<string, string>>({});
   useEffect(() => {
-    const first = seen.current === null;
-    seen.current ??= {};
     for (const j of q.data ?? []) {
       const prev = seen.current[j.id];
-      if (!first && prev !== j.status) {
+      if (prev !== j.status) {
         void qc.invalidateQueries({ queryKey: ["project", j.project] });
         if (prev && j.cost === "paid" && !["running", "queued"].includes(j.status)) { void qc.invalidateQueries({ queryKey: ["credits"] }); void qc.invalidateQueries({ queryKey: ["runpod-balance"] }); }
       }
