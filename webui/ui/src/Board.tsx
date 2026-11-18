@@ -946,9 +946,18 @@ function doneTip(done: boolean, review: boolean, doneKey: string): string {
   return `${review ? "approve clip" : "mark completed"} in ${where}`;
 }
 
+/** The card's busy pill; while its job runs, ⏹ stops this stage only (the job's other stages go on). */
 function BusyPill({ busy }: { readonly busy: Active }) {
   const label = ACTION_LABEL[busy.action] ?? busy.action;
-  return <span className="pill run" title={`${label}${busy.queued ? " (queued)" : " (running)"}`}>{busy.queued ? "⏳ " : ""}{label}</span>;
+  const stop = (e: MouseEvent) => {
+    e.stopPropagation();
+    for (const t of busy.tags) void api(`/jobs/${busy.job}/stages/${t}/cancel`, "POST");
+  };
+  return (
+    <span className="pill run" title={`${label}${busy.queued ? " (queued)" : " (running)"}`}>{busy.queued ? "⏳ " : ""}{label}
+      {!busy.queued && busy.tags.length > 0 && <button type="button" className="pillx" title="stop this stage (the job's other stages go on)" onClick={stop}>⏹</button>}
+    </span>
+  );
 }
 
 /** A card's duration + the other folders it is ✓'d in. */

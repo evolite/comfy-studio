@@ -161,6 +161,7 @@ textarea { width:100%; resize:vertical; font:12.5px/1.45 ui-monospace, monospace
 .stage.lane-cloud { --lane:var(--accent); } .stage.lane-local { --lane:var(--local); }
 .stage.busy .pill.run { background:var(--lane); animation:pillpulse 1.6s ease-in-out infinite; } .pill.run.lane-local { background:var(--local); }
 @media (prefers-reduced-motion: reduce) { .stage.busy, .stage.busy .pill.run { animation:none; } }
+.pillx { margin-left:6px; padding:0 2px; border:0; background:none; color:inherit; font:inherit; cursor:pointer; opacity:.85; } .pillx:hover { opacity:1; transform:scale(1.15); }
 
 /* a result landed that you haven't clicked on yet */
 .stage.fresh { background:color-mix(in srgb, var(--ok) 11%, var(--panel)); border-color:var(--ok); box-shadow:inset 3px 0 0 var(--ok); }

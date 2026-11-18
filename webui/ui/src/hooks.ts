@@ -88,7 +88,8 @@ export function useAnimateBatchAdd(project: string) {
   });
 }
 
-export type Active = { lane: "local" | "cloud"; action: string; queued: boolean; folder: string };
+/** job = its id, tags = the stage's unfinished renders in it ("5", or "5.t2" per take): what the card's ⏹ stops. */
+export type Active = { lane: "local" | "cloud"; action: string; queued: boolean; folder: string; job: string; tags: string[] };
 
 /** Preview takes per stage a job renders (1 for everything but a multi-take Preview). */
 export const jobTakes = (j: Job) => Math.max(1, Number(j.req.takes) || 1);
@@ -117,7 +118,9 @@ export function activeByStage(jobs: Job[], project: string): Record<number, Acti
     const all = ids.length ? ids : [...new Set(Object.keys(st).map((k) => Number(k.split(".")[0])))];
     for (const id of all) {
       if (finishedTakes(j, id) >= jobTakes(j)) continue;
-      out[id] = { lane: j.lane === "local" ? "local" : "cloud", action: j.action, queued: j.status === "queued", folder: (j.req.folder as string | undefined) ?? "" };
+      const k = jobTakes(j), fin = (t: string) => ["done", "failed", "cancelled"].includes(st[t]);
+      const tags = (k > 1 ? Array.from({ length: k }, (_, i) => `${id}.t${i + 1}`) : [String(id)]).filter((t) => !fin(t));
+      out[id] = { lane: j.lane === "local" ? "local" : "cloud", action: j.action, queued: j.status === "queued", folder: (j.req.folder as string | undefined) ?? "", job: j.id, tags };
     }
   }
   return out;
