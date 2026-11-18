@@ -85,7 +85,7 @@ function Editor({ name, e, onDone }: { readonly name: string; readonly e: VoiceE
   );
 }
 
-/** Render this voice's sample: (re)make its stage in the samples project, then Animate smooth it (queued into the batch
+/** Render this voice's sample: (re)make its stage in the samples project, then Animate it (queued into the batch
  *  when "Batch" is armed on RunPod, like an Animate click on the board). Paid: one clip. */
 function MakeSample({ name, e }: { readonly name: string; readonly e: VoiceEntry }) {
   const qc = useQueryClient();
@@ -94,7 +94,7 @@ function MakeSample({ name, e }: { readonly name: string; readonly e: VoiceEntry
   const batch = armed && target === "runpod";
   const [msg, setMsg] = useState("");
   const go = async () => {
-    if (!confirm(`Render a sample clip for ${e.label || name}? (one paid Animate smooth${batch ? ", queued into the batch" : ""})`)) return;
+    if (!confirm(`Render a sample clip for ${e.label || name}? (one paid Animate${batch ? ", queued into the batch" : ""})`)) return;
     try {
       const t = await api<{ project: string; stage: number; folder: string }>(`/voices/${name}/sample`, "POST");
       const req = { action: "animate_rife", stages: [t.stage], folder: t.folder };

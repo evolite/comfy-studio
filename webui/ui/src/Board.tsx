@@ -26,7 +26,7 @@ export const ACTIONS: Record<string, ActionInfo> = {
   finish_local: { label: "Finish (SeedVR)", where: "local", out: "finish/", tip: "Optional SeedVR2 upscale of the upscale result on your local ComfyUI (from the folder you're reviewing, else the ✓'d one, else hires/, else IL/) → finish/stage_N.png" },
   finish: { label: "Finish (SeedVR)", where: "cloud", out: "finish/", tip: "Optional SeedVR2 upscale of the upscale result in the cloud (from the folder you're reviewing, else the ✓'d one, else hires/, else IL/) → finish/stage_N.png" },
   animate: { label: "Animate", where: "cloud", out: "videos/", tip: "Image-to-video from the stills in the chosen folder → <folder>/videos/stage_N.mp4" },
-  animate_rife: { label: "Animate smooth", where: "cloud", out: "interp/videos/", tip: "Image-to-video plus frame smoothing (RIFE ×2) in the same cloud job: the 24 fps clip → <folder>/videos/, the 48 fps clip straight into interp/videos/ (⑤ Interpolate)" },
+  animate_rife: { label: "Animate", where: "cloud", out: "interp/videos/", tip: "Image-to-video plus frame smoothing (RIFE ×2) in the same cloud job: the 24 fps clip → <folder>/videos/, the 48 fps clip straight into interp/videos/ (⑤ Interpolate)" },
   interpolate: { label: "Interpolate", where: "local", out: "videos/", tip: "RIFE frame interpolation of the folder's clips on your local ComfyUI: 24 → 48 fps, same length; the source clip stays, a redone result's old one stays under ⋯ › Previous versions" },
   generate: { label: "Full cloud run", where: "cloud", out: "root", tip: "Everything in the cloud (Krea2 + IL + upscale) → stage_N.png in the project root" },
   dry_run: { label: "Dry run", where: "local", out: "—", tip: "Build and validate the graphs only; submits nothing" },
@@ -216,9 +216,9 @@ function animNote(src: AnimSource): string {
   return `replaces ${src.replace} clip${src.replace > 1 ? "s" : ""}`;
 }
 
-/** The Animate block of a Run menu: pick the source folder, then Animate or Animate smooth. */
-function AnimateForm({ sources, src, stages, why, smooth, batchHint, onPickSource, onRun, onKeyframes }: {
-  readonly sources: AnimSource[]; readonly src?: AnimSource; readonly stages: number; readonly why: (a: string) => string; readonly smooth: boolean; readonly batchHint: boolean;
+/** The Animate block of a Run menu: pick the source folder, then Animate (48 fps, RIFE in the same job) or Keyframes. */
+function AnimateForm({ sources, src, stages, why, batchHint, onPickSource, onRun, onKeyframes }: {
+  readonly sources: AnimSource[]; readonly src?: AnimSource; readonly stages: number; readonly why: (a: string) => string; readonly batchHint: boolean;
   readonly onPickSource: (f: string) => void; readonly onRun: (a: string, folder: string) => void; readonly onKeyframes?: (folder: string) => void;
 }) {
   const noStill = !src || src.missing.length > 0;
@@ -240,18 +240,13 @@ function AnimateForm({ sources, src, stages, why, smooth, batchHint, onPickSourc
         {src && (src.missing.length > 0 || src.replace > 0) && <div className={`afnote ${src.missing.length ? "warn" : ""}`}
           title={src.replace ? "the old clip moves to Previous versions" : undefined}>{animNote(src)}</div>}
         <div className="afgos">
-          <button className="afgo" disabled={noStill || !!why("animate")} title={why("animate") || undefined} onClick={() => onRun("animate", src!.f)}>
+          <button className="afgo interp" disabled={noStill || !!why("animate_rife")} title={why("animate_rife") || ACTIONS.animate_rife.tip} onClick={() => onRun("animate_rife", src!.f)}>
             <span className="afgo-main">Animate</span>
             <span className="afgo-play">▶</span>
-            {batchHint && <span className="afgo-sub">→ batch</span>}
-          </button>
-          {smooth && <button className="afgo interp" disabled={noStill || !!why("animate_rife")} title={why("animate_rife") || ACTIONS.animate_rife.tip} onClick={() => onRun("animate_rife", src!.f)}>
-            <span className="afgo-main">Animate smooth</span>
-            <span className="afgo-play">▶</span>
             <span className="afgo-sub">48 fps{batchHint ? " · → batch" : ""}</span>
-          </button>}
-          {onKeyframes && stages > 1 && <button className="afgo keyframes" disabled={noStill || !!why("animate")}
-            title={why("animate") || `one clip through these ${stages} stills in order: a new stage after the last, its motion the stages' motions joined (edit it there)`}
+          </button>
+          {onKeyframes && stages > 1 && <button className="afgo keyframes" disabled={noStill || !!why("animate_rife")}
+            title={why("animate_rife") || `one 48 fps clip through these ${stages} stills in order: a new stage after the last, its motion the stages' motions joined (edit it there)`}
             onClick={() => onKeyframes(src!.f)}>
             <span className="afgo-main">Keyframes</span>
             <span className="afgo-play">▶</span>
@@ -297,7 +292,7 @@ export function RunMenu({ project, ids, label, workFolder, why, onGo, sources, a
             <span className="dim">Takes</span>
             <span className="seg">{[1, 2, 4].map((n) => <button key={n} className={nTakes === n ? "on" : ""} onClick={() => setPreviewTakes(n)}>×{n}</button>)}</span>
           </div>}
-          {shown("animate") && <AnimateForm sources={sources} src={src} stages={ids.length} why={why} smooth={shown("animate_rife")} batchHint={batchHint} onPickSource={setPick} onRun={runIt}
+          {shown("animate_rife") && <AnimateForm sources={sources} src={src} stages={ids.length} why={why} batchHint={batchHint} onPickSource={setPick} onRun={runIt}
             onKeyframes={onKeyframes && ((f) => { setOpen(false); onKeyframes(f); })} />}
           {shown("interpolate") && <div className="aform">
             <button className="afgo interp" disabled={!!why("interpolate")} title={why("interpolate") || ACTIONS.interpolate.tip}
@@ -633,7 +628,7 @@ export default function Board({ name }: { readonly name: string }) {
   };
   // the picked stages in board order -> a new keyframe stage, then animate it from the same folder
   const keyframeClip = (f: string) => api<Stage>(`/projects/${name}/keyframes`, "POST", { stages: allStages.map((s) => s.id).filter((i) => sel.has(i)) })
-    .then(async (n) => { setSel(new Set()); await proj.refetch(); setMsg(`stage ${n.id}: keyframe clip`); await go("animate", [n.id], { folder: f }); })
+    .then(async (n) => { setSel(new Set()); await proj.refetch(); setMsg(`stage ${n.id}: keyframe clip`); await go("animate_rife", [n.id], { folder: f }); })
     .catch(showMsgErr);
   const whyCtx: WhyCtx = { p, stages: allStages, folder, animFolder, localDown: !!health && !health.local };
   const disabledWhy = (a: string, ids: number[] = []) => disabledReason(a, ids, whyCtx);
@@ -660,7 +655,7 @@ export default function Board({ name }: { readonly name: string }) {
   const redo = (id: number) => {
     if (phase === "interp") {
       if (!disabledWhy("interpolate", [id])) void go("interpolate", [id]);
-    } else if (p.folders[folder]?.stills[id] && !disabledWhy("animate", [id])) void go("animate", [id], { folder });
+    } else if (p.folders[folder]?.stills[id] && !disabledWhy("animate_rife", [id])) void go("animate_rife", [id], { folder });
   };
   const stageKey = (e: KeyboardEvent, id: number) => {
     if (e.key === "d") void markDone([id], !doneIn(stageOf(id), doneKey));

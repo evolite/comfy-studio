@@ -234,8 +234,7 @@ function RunButtons() {
             : <span key={col} />)}
         </Fragment>
       ))}
-      <span className="rtitle">Animate</span><span /><label><input type="checkbox" aria-label="Animate" checked={!off.has("animate")} onChange={(e) => setActionHidden("animate", !e.target.checked)} /></label>
-      <span className="rtitle">Animate smooth</span><span /><label><input type="checkbox" aria-label="Animate smooth" checked={!off.has("animate_rife")} onChange={(e) => setActionHidden("animate_rife", !e.target.checked)} /></label>
+      <span className="rtitle">Animate (48 fps)</span><span /><label><input type="checkbox" aria-label="Animate" checked={!off.has("animate_rife")} onChange={(e) => setActionHidden("animate_rife", !e.target.checked)} /></label>
       <span className="rtitle">Interpolate clips</span><label><input type="checkbox" aria-label="Interpolate clips" checked={!off.has("interpolate")} onChange={(e) => setActionHidden("interpolate", !e.target.checked)} /></label><span />
     </div>
   );
