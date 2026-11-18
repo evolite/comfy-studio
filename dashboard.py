@@ -266,7 +266,7 @@ def runpod_state():
     ComfyUI answers, its queue and progress like the local view."""
     with _pod_lock:
         now = time.time()
-        if now - _pod_cache["t"] > 10:
+        if now - _pod_cache["t"] > 10 or runpod_pod._wake_t() > _pod_cache["t"]:
             try:
                 _pod_cache["v"] = runpod_pod.status()
             except Exception as e:  # noqa: BLE001

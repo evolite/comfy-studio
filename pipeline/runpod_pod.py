@@ -30,7 +30,7 @@ STARTS = config.LOGS_DIR / "runpod_starts.json"  # pods the studio started, newe
 READY_TIMEOUT = 900  # a fresh pod: image pull + the template's boot on the volume (404 -> 502 -> 200 on the proxy meanwhile);
 # cold starts usually take 1-4 min but some hosts pull slowly, so only one silent past 15 is taken as stuck and deleted
 GPU_RETRY_S = 30  # how often _create_waiting asks RunPod again while no GPU is free
-WAKE = config.LOGS_DIR / "runpod_wake"  # touched when a pod is created or deleted: status() in other processes re-asks at once
+WAKE = config.LOGS_DIR / "runpod_wake"  # touched when animate asks for a pod, when it is ready, created or deleted: status() in other processes re-asks at once
 STATUS_TTL = {"up": 10, "down": 300, "limited": 900, "minute": 60}  # status() caches the pod list: the ⚙ page and the KDE widget poll it all
 # day, and RunPod's REST API has a daily rate limit (429) that a 10 s poll with no pod used up on its own
 
@@ -277,6 +277,7 @@ def _wait_ready(pod, created, log) -> bool:
 def ensure_up(log=print, big=False) -> str:
     """The URL of a pod whose ComfyUI answers: the running one, else a new one (a stopped or dead leftover is terminated first).
     big = a clip longer than config.RUNPOD_BIG_SECONDS: only RUNPOD_BIG_GPUS will do, so a smaller running pod is replaced."""
+    _wake()
     t, created = time.time(), False
     gpus = config.RUNPOD_BIG_GPUS if big else config.RUNPOD_GPUS
     pod = _reusable(find(), big, gpus, log)
@@ -294,6 +295,7 @@ def ensure_up(log=print, big=False) -> str:
     if created:
         _save_starts(_starts() + [{"t": round(t), "pod": pod["id"], "gpu": gpu_name(pod), "ready_s": round(time.time() - boot),
                                     "cost_per_hr": pod.get("cost"), "seen": round(time.time())}])
+    _wake()
     return url(pod["id"])
 
 
