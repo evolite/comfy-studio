@@ -146,20 +146,27 @@ def _save_node_outputs(node_id, node_outputs, run_dir: Path, labels: dict, fetch
                 print(f"  failed to fetch {dest.name} (node {node_id}): {e}", flush=True)
 
 
-def save_outputs(job: dict, run_dir: Path, labels: dict = None, final_node: str = None, fetch=download):
-    """Download every output file to run_dir/images/... and copy final_node's image to run_dir/final.png.
-    Returns [(node_id, path)]. `fetch(file, dest)` = where the files come from: Comfy Cloud, or a ComfyUI
-    server for a /history entry (same outputs shape)."""
+def save_outputs(job: dict, run_dir: Path, labels: dict = None, final_node: str = None, fetch=download, only=None):
+    """Download every output file (of the nodes in `only`, when given) to run_dir/images/... and copy final_node's first
+    file to run_dir/final.<ext> (final.png for a still, final.mp4 for a clip). Returns [(node_id, path)].
+    `fetch(file, dest)` = where the files come from: Comfy Cloud, or a ComfyUI server for a /history entry (same shape)."""
     labels = labels or {}
     saved = []
+    for f in run_dir.glob("final.*"):
+        f.unlink()  # never reuse a previous run's final
     for node_id, node_outputs in job.get("outputs", {}).items():
-        _save_node_outputs(node_id, node_outputs, run_dir, labels, fetch, saved)
+        if only is None or node_id in only:
+            _save_node_outputs(node_id, node_outputs, run_dir, labels, fetch, saved)
     finals = [d for nid, d in saved if nid == final_node]
     if finals:
-        final = run_dir / FINAL_PNG
+        final = run_dir / f"final{finals[0].suffix}"
         shutil.copyfile(finals[0], final)
-        print(f"  final image: {final}", flush=True)
+        print(f"  final: {final}", flush=True)
     return saved
+
+
+def final_of(run_dir: Path) -> Path | None:
+    return next(iter(sorted(run_dir.glob("final.*"))), None)
 
 
 class CloudTarget(Target):
@@ -194,8 +201,8 @@ class CloudTarget(Target):
         prompt_id, resp = submit(job.graph)
         (job.debug_dir / "submit_response.json").write_text(json.dumps(resp, indent=2))
         eta = timings.expected(timings.sig(job.graph), False)
-        print(f"  [{job.debug_dir.name}] submitted -> {prompt_id}" + (f" expected {eta:.0f}s" if eta else ""), flush=True)
-        events.stage(job.debug_dir.name, "submitted", prompt_id=prompt_id, expected=round(eta) if eta else None)
+        print(f"  [{job.tag}] submitted -> {prompt_id}" + (f" expected {eta:.0f}s" if eta else ""), flush=True)
+        events.stage(job.tag, "submitted", prompt_id=prompt_id, expected=round(eta) if eta else None)
         job.handle = {"id": prompt_id, "state": "submitted", "restarts": 0, "t0": time.time()}
 
     def _finish(self, job: StageJob) -> None:
@@ -206,32 +213,30 @@ class CloudTarget(Target):
         full = fetch_job(h["id"])
         (job.debug_dir / "job_full.json").write_text(json.dumps(full, indent=2))
         timings.record_cloud(job.graph, full)
-        final = job.debug_dir / FINAL_PNG
-        final.unlink(missing_ok=True)  # never reuse a previous run's final
-        save_outputs(full, job.debug_dir, job.node_labels, job.final_node)
-        if final.exists():
-            job.final = final
-        else:
-            job.error = f"succeeded but no {FINAL_PNG} found -- check {job.debug_dir}"
+        job.outputs = save_outputs(full, job.debug_dir, job.node_labels, job.final_node)
+        job.final = final_of(job.debug_dir)
+        if not job.final:
+            job.error = f"succeeded but the final node {job.final_node} saved nothing -- check {job.debug_dir}"
 
     def _poll_job(self, prompt_id: str, j: StageJob, pending: dict, seen: dict) -> str | None:
         """One poll round of a pending job: state-change log, terminal hand-off ("done"), or stall resubmit."""
         h = j.handle
         state, status = job_state(prompt_id)
         if state != h["state"]:
-            print(f"  [{j.debug_dir.name}] {state}", flush=True)
+            print(f"  [{j.tag}] {state}", flush=True)
             h["state"] = state
         if state in TERMINAL:
             (j.debug_dir / "final_status.json").write_text(json.dumps(status, indent=2))
             del pending[prompt_id]
             return "done"
         if h["restarts"] < MAX_RESTARTS and stalled(seen, prompt_id, state):
-            print(f"  [{j.debug_dir.name}] still '{state}' after {STALL_SECONDS}s, resubmitting", flush=True)
+            print(f"  [{j.tag}] still '{state}' after {STALL_SECONDS}s, resubmitting", flush=True)
             cancel(prompt_id)
             del pending[prompt_id]
             h["restarts"] += 1
             h["id"], _ = submit(j.graph)
             h["state"] = "submitted"
+            events.stage(j.tag, "submitted", prompt_id=h["id"])
             pending[h["id"]] = j
         return None
 

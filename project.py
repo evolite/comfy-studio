@@ -34,17 +34,13 @@ Top-level `video_megapixels` (i2v clip size; template default 0.4 = 512x768 at 2
                                                      with an upscale result and no finish/stage_N.png)
                                                      --face N..: IL FaceDetailer on IL/stage_N.png, replacing it (old -> its history); cloud (paid), --local free
                                                      (run after the IL + upscale pass; face_* / il_checkpoint settings, il_scene + IL loras)
-  python3 project.py <name> animate [folder] [N...] [--rife] [--target cloud|runpod]  no N: i2v every stage without a clip;
+  python3 project.py <name> animate [folder] [N...] [--target cloud|runpod] [--dry-run]  no N: i2v every stage without a clip;
                                                      with N: re-render those clips (paid). folder = a subfolder of the project
                                                      (finish, hires, IL, preview, ...): stills from <folder>/stage_N.png, clips into
                                                      <folder>/videos/; default = the project root (stage_N.png -> videos/)
-                                                     --rife: the same cloud job also interpolates x2 -> interp/videos/ (step 5)
+                                                     every clip is also interpolated x2 (RIFE, 48 fps) in the same job -> interp/videos/
                                                      --target: Comfy Cloud or our RunPod pod (started on demand, bills per hour
                                                      while up, deletes itself when idle; pipeline/runpod_pod.py); default = ⚙ setting
-  python3 project.py <name> interpolate [folder] [N...]   RIFE frame interpolation (x2: 24 -> 48 fps) of <folder>/videos/
-                                                     stage_N.mp4 on the local ComfyUI (free) -> interp/videos/stage_N.mp4 (sources
-                                                     untouched); no N: every clip without an interp/ result; needs the
-                                                     ComfyUI-Frame-Interpolation node; cut it with `edit interp animate`
   python3 project.py <name> edit [folder] [animate|stills] [N...] [make_edit.py args]   beat-synced edit (free)
                                                      folder as for animate; `animate` = cut that folder's clips (errors if none),
                                                      `stills` = its stage_N.png; N... = only those stages, in that order;
@@ -69,7 +65,6 @@ import secrets
 import shutil
 import subprocess
 import sys
-import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -79,17 +74,13 @@ import config  # noqa: E402
 sys.path.insert(0, str(ROOT / "pipeline"))
 sys.path.insert(0, str(ROOT / "video"))
 import animate_pipeline
-import events
-import interpolate
 import lora_registry
 import voice_registry
 import generate as full_engine
 import graph_settings
-import history
 import image_loras
 import run_pipeline
 import runner
-import runpod_pod
 import steps
 import takes
 import targets
@@ -211,7 +202,7 @@ def make_ctx(name):
     """What a step needs about a project: its folder, engine, run-wide settings and stages by id."""
     d, cfg = project(name)
     return SimpleNamespace(name=name, d=d, cfg=cfg, engine=run_pipeline.ENGINES[cfg["engine"]], engine_name=cfg["engine"],
-                           stages=by_id(load_stages(name)),
+                           stages=by_id(load_stages(name)), reload=lambda: by_id(load_stages(name)),
                            common={"seed": cfg.get("seed", secrets.randbits(48)), **graph_settings.check_settings(cfg["engine"], cfg.get("settings", {}))})
 
 
@@ -425,128 +416,44 @@ def folder_and_stages(d, tokens):
     return folder, nums
 
 
-def animate_cmd(a, src, only):
-    """One sequential animate_pipeline.py run for every stage without a clip (concurrent i2v submissions
-    trip a backend error). Per-stage LoRAs/seeds come from `video_loras` / `video_seed` in project.json."""
-    d, cfg = project(a.name)
-    stages = load_stages(a.name)
-    ids = by_id(stages)
-    pngs = sorted(int(p.stem[6:]) for p in src.glob("stage_*.png") if p.stem[6:].isdigit() and int(p.stem[6:]) in ids)  # a removed stage's leftover PNG is ignored
+def clip_ctx(name, src):
+    """A step ctx for animate on the stills of folder `src`: the stage's video engine and duration are read
+    from project.json when its graph is built (steps.py)."""
+    ctx = make_ctx(name)
+    ctx.clip_from = "" if src == ctx.d else src.name
+    ctx.video_engine = lambda s: video_engine(ctx.cfg, s)
+    ctx.duration_of = lambda n, engine: stage_duration(load_stages(name), n, engine)["duration_value"]
+    return ctx
+
+
+def cmd_animate(a):
+    """i2v clips of a folder's stills + their RIFE x2, on Comfy Cloud or the pod (steps.py animate through runner.py). No N:
+    every stage with a still and no clip yet; with N: those (the clips they replace go into their history)."""
+    d, _ = project(a.name)
+    src, only = folder_and_stages(d, a.args)
+    ctx = clip_ctx(a.name, src)
+    pngs = [n for n in ctx.stages if (src / f"stage_{n}.png").exists()]  # a removed stage's leftover PNG is ignored
     unknown = [n for n in only if n not in pngs]
     if unknown:
         sys.exit(f"stages {unknown}: no {src.name}/stage_N.png (or not in project.json) to animate")
     todo = [n for n in pngs if (n in only if only else not (src / "videos" / f"stage_{n}.mp4").exists())]
-    bad = [n for n in todo if not ids[n].get("motion", "").strip()]
+    bad = [n for n in todo if not ctx.stages[n].get("motion", "").strip()]
     if bad:
         sys.exit(f"stages {bad}: empty `motion` in {paths(a.name)[1]}")
-    (d / "_debug").mkdir(exist_ok=True)
-    motion_p, dur_p, lora_p, seed_p, audio_p, engine_p = (d / "_debug" / f for f in ("motion_prompts.json", "durations.json", "loras.json", "seeds.json", "audio.json", "engines.json"))
-    voices = voice_registry.load()["voices"]  # {voice...} slots filled here, so the pipeline (and _debug graphs) see the final text
-    motions = {n: voice_registry.expand(ids[n]["motion"], voice_registry.cast_of(ids[n], cfg), f"stage {n}", voices) for n in todo}
-    save(motion_p, {str(n): lora_registry.with_video_triggers(motions[n], ids[n].get("video_loras", {})) for n in todo})
-    durs = {n: stage_duration(stages, n, video_engine(cfg, ids[n])) for n in todo}
-    save(dur_p, {str(n): v for n, v in durs.items()})
-    save(engine_p, {str(n): video_engine(cfg, ids[n]) for n in todo})
-    save(lora_p, {str(n): ids[n].get("video_loras", {}) for n in todo})
-    save(seed_p, {str(n): ids[n]["video_seed"] for n in todo if "video_seed" in ids[n]})
-    save(audio_p, {str(n): True for n in todo if ids[n].get("audio")})
-    kf_p = d / "_debug" / "keyframes.json"
-    save(kf_p, {str(n): stage_keyframes(src, ids, n) for n in todo if ids[n].get("keyframes")})
-    return [sys.executable, str(ROOT / "video" / "animate_pipeline.py"), str(src), "--motion-prompts", str(motion_p),
-            "--durations", str(dur_p), "--loras", str(lora_p), "--seeds", str(seed_p), "--audio", str(audio_p), "--engines", str(engine_p),
-            "--keyframes", str(kf_p)] + (["--megapixels", str(cfg["video_megapixels"])] if cfg.get("video_megapixels") else []) \
-        + (["--rife-dir", str(d / interpolate.FOLDER)] if a.rife else []) + (["--server", pod_server(any(v["duration_value"] > config.RUNPOD_BIG_SECONDS for v in durs.values()))] if a.target == "runpod" and todo else [])
-
-
-def stage_keyframes(src, ids, n):
-    """Stage n's `keyframes` ([{"stage": k, "at": seconds}], `at` optional) as the stills in the same folder as n's own."""
-    out = []
-    for kf in ids[n]["keyframes"]:
-        png = src / f"stage_{kf['stage']}.png"
-        if kf["stage"] not in ids or not png.exists():
-            sys.exit(f"stage {n}: keyframe stage {kf['stage']} has no {src.name}/stage_{kf['stage']}.png")
-        out.append({"png": str(png), "at": kf.get("at")})
-    return out
-
-
-def pod_server(big=False):
-    """The RunPod pod's ComfyUI URL, starting the pod when none is up (minutes; the log says how long); big = a 96 GB one."""
-    try:
-        return runpod_pod.ensure_up(lambda m: print(m, flush=True), big)
-    except runpod_pod.PodError as e:
-        sys.exit(f"RunPod: {e}")
-
-
-def cmd_animate(a):
-    d, _ = project(a.name)
-    src, stages = folder_and_stages(d, a.args)
-    cmd = animate_cmd(a, src, stages)  # first: a pod that fails to start leaves the current clips in place
-    for n in stages:
-        for mp4 in [src / "videos" / f"stage_{n}.mp4"] + ([d / interpolate.FOLDER / "videos" / f"stage_{n}.mp4"] if a.rife else []):
-            history.archive(d, mp4)
-    sys.exit(subprocess.call(cmd))
-
-
-def cmd_recover(a):
-    """Save cloud/pod clips whose animate run died before downloading them (e.g. a web-UI restart): every folder's
-    _debug/i2v_pending/ records whose process is gone (video/animate_pipeline.py recover())."""
-    d, _ = project(a.name)
-    dirs = [p.parent.parent for p in d.glob(f"**/_debug/{animate_pipeline.PENDING}") if p.is_dir()]
-    if not any(animate_pipeline.orphans(x) for x in dirs):
-        print("nothing to recover", flush=True)
-        return
-    failed = sum(animate_pipeline.recover(x) for x in dirs)
-    if failed:
-        sys.exit(f"{failed} clip(s) had failed on the cloud or the pod, or the pod was gone")
-
-
-def _interpolate_one(a, d, src, vids, dest, tmp, n) -> bool:
-    """One clip through RIFE on the local ComfyUI; False when it failed (logged). A server that can't be reached exits."""
-    out = tmp / f"stage_{n}.mp4"
-    t0 = time.time()
-    try:
-        secs = interpolate.interpolate(vids / f"stage_{n}.mp4", out, a.server, f"{a.name} stage {n} interpolate")
-    except TimeoutError as e:
-        print(f"  [stage_{n}] FAILED: {e}", flush=True)
-        events.stage(n, "failed", error=str(e))
-        return False
-    except OSError as e:
-        sys.exit(f"can't reach the local ComfyUI at {a.server} ({e}) -- start it, or pass --server")
-    except RuntimeError as e:
-        print(f"  [stage_{n}] FAILED: {e}", flush=True)
-        events.stage(n, "failed", error=str(e))
-        return False
-    dest.mkdir(parents=True, exist_ok=True)
-    history.archive(d, dest / f"stage_{n}.mp4")
-    shutil.move(out, dest / f"stage_{n}.mp4")
-    (dest.parent / "_debug" / f"stage_{n}").mkdir(parents=True, exist_ok=True)
-    save(dest.parent / "_debug" / f"stage_{n}" / "source.json", {"folder": src.name if src != d else ""})
-    print(f"  [stage_{n}] done (waited {time.time() - t0:.0f}s" + (f", processed {secs:.0f}s" if secs else "") + f") -> {dest / f'stage_{n}.mp4'}", flush=True)
-    events.stage(n, "done", processed=round(secs) if secs else None)
-    return True
-
-
-def cmd_interpolate(a):
-    """RIFE x2 of a folder's clips (<folder>/videos/stage_N.mp4) into interp/videos/stage_N.mp4, one at a time on the local ComfyUI.
-    The source clips stay as they are; no N: every clip without an interp/ result yet, with N: redo those (the old result goes into
-    its history, pipeline/history.py). interp/_debug/stage_N/source.json records which folder each result came from."""
-    d, _ = project(a.name)
-    src, only = folder_and_stages(d, a.args)
-    if src.name == interpolate.FOLDER:
-        sys.exit(f"{interpolate.FOLDER}/ holds the results: name the folder whose clips to interpolate (the root, finish, hires, ...)")
-    vids, dest = src / "videos", d / interpolate.FOLDER / "videos"
-    have = sorted(int(p.stem[6:]) for p in vids.glob("stage_*.mp4") if p.stem[6:].isdigit())
-    missing = [n for n in only if n not in have]
-    if missing:
-        sys.exit(f"stages {missing}: no {vids.relative_to(d)}/stage_N.mp4 -- animate them first")
-    todo = only or [n for n in have if not (dest / f"stage_{n}.mp4").exists()]
     if not todo:
-        sys.exit(f"nothing to interpolate in {vids.relative_to(d)}" if not have else 0)
-    tmp = d / "_debug" / "interpolate"
-    print(f"=== interpolate x{interpolate.MULTIPLIER} on local: {len(todo)} clip(s) from {vids.relative_to(d)} -> {dest} ===", flush=True)
-    failed = [n for n in todo if not _interpolate_one(a, d, src, vids, dest, tmp, n)]
-    print(f"\n{len(todo) - len(failed)}/{len(todo)} clips interpolated" + (f"; failed: {failed}" if failed else ""))
-    sys.exit(1 if failed else 0)
+        print(f"nothing to animate in {src.name}/ (every still has a clip; name stages to redo them)")
+        return
+    if a.target == "runpod":
+        big = any(ctx.duration_of(n, ctx.video_engine(ctx.stages[n])) > config.RUNPOD_BIG_SECONDS for n in todo)
+        try:
+            target = targets.get("runpod", big=big, start=not a.dry_run)  # starts the pod: minutes, the log says how long
+        except targets.TargetUnavailable as e:
+            sys.exit(str(e))
+    else:
+        target = targets.get("cloud")
+    failed = runner.run_step(steps.STEPS["animate"], target, ctx, todo, a.dry_run)
+    if failed:
+        sys.exit(f"\nstages {sorted(failed)} failed (rerun to retry)")
 
 
 def cmd_edit(a):
@@ -710,13 +617,10 @@ def main():
     p.add_argument("--face", action="store_true", help="IL FaceDetailer (cloud, paid; --local = free) on IL/stage_N.png, replacing it; needs stage numbers")
     p = add("animate", cmd_animate)
     p.add_argument("args", nargs="*", metavar="[folder] [N..]")
-    p.add_argument("--rife", action="store_true", help="Animate + RIFE: the same cloud job also interpolates each clip x2 (48 fps) into interp/videos/")
+    p.add_argument("--rife", action="store_true", help=argparse.SUPPRESS)  # always on now; still accepted from older job argv
     p.add_argument("--target", choices=("cloud", "runpod"), default=config.animate_target(),
                    help="Comfy Cloud, or our RunPod pod (started on demand; pipeline/runpod_pod.py); default: the ⚙ animate target")
-    add("recover", cmd_recover, help="save cloud clips whose animate run died before downloading them")
-    p = add("interpolate", cmd_interpolate)
-    p.add_argument("args", nargs="*", metavar="[folder] [N..]")
-    p.add_argument("--server", default=config.LOCAL_COMFY_URL, help="local ComfyUI address")
+    p.add_argument("--dry-run", action="store_true", help="build and check every clip graph; nothing is queued or paid (the pod isn't started)")
     p = add("edit", cmd_edit)
     p.add_argument("extra", nargs=argparse.REMAINDER)
     add("status", cmd_status)

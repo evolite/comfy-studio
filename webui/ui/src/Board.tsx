@@ -30,7 +30,6 @@ export const ACTIONS: Record<string, ActionInfo> = {
   interpolate: { label: "Interpolate", where: "local", out: "videos/", tip: "RIFE frame interpolation of the folder's clips on your local ComfyUI: 24 → 48 fps, same length; the source clip stays, a redone result's old one stays under ⋯ › Previous versions" },
   generate: { label: "Full cloud run", where: "cloud", out: "root", tip: "Everything in the cloud (Krea2 + IL + upscale) → stage_N.png in the project root" },
   dry_run: { label: "Dry run", where: "local", out: "—", tip: "Build and validate the graphs only; submits nothing" },
-  recover: { label: "Recover clips", where: "cloud", out: "videos/", tip: "Saves cloud clips whose animate run was interrupted (started automatically after a restart)" },
 };
 type Seen = { baseline: number; slots: Record<string, number> };
 const slotKey = (id: number, f: string, kind: string) => `${id}/${f}/${kind}`;

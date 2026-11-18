@@ -19,9 +19,8 @@ It's built around some steps
 1. **Preview** — Krea2 (or MOSS-Image) base render, several takes per stage
 2. **Upscale** — Illustrious refine with ControlNets, or a latent hires pass; optional face detailer
 3. **Finish** — SeedVR2 (optional)
-4. **Animate** — image-to-video with MiniMax H3 or LTX 2.3, on Comfy Cloud or your own RunPod pod
-5. **Interpolate** — RIFE to 48 fps
-6. **Edit** — a frame-exact, beat-synced vertical edit of the clips (or a no-music scenario cut)
+4. **Animate** — image-to-video with MiniMax H3 or LTX 2.3, on Comfy Cloud or your own RunPod pod, RIFE-smoothed to 48 fps
+5. **Edit** — a frame-exact, beat-synced vertical edit of the clips (or a no-music scenario cut)
 
 Image and video steps run locally (free) or on Comfy Cloud (credits). LoRAs, voices and model choices are libraries you edit
 in the web UI.

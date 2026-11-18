@@ -12,6 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "video"), str(ROOT / "pipeline")]
 import animate_pipeline as ap  # noqa: E402
+from targets.pod import CHECK_FIELDS  # noqa: E402
 import lora_registry  # noqa: E402
 from targets import local  # noqa: E402
 
@@ -31,7 +32,7 @@ def main():
     oi = json.loads(local._call(server, "/object_info"))
     missing = {}
     for label, g in graphs():
-        for p in local.check(g, server, ap.CHECK_FIELDS, oi):
+        for p in local.check(g, server, CHECK_FIELDS, oi):
             missing.setdefault(p.split(": ", 1)[1], []).append(label)  # drop the node id: the same file shows up in many graphs
     for problem, labels in missing.items():
         print(f"MISSING {problem}  (in {', '.join(labels[:3])}{' …' if len(labels) > 3 else ''})")

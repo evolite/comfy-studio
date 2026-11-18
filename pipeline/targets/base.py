@@ -1,13 +1,15 @@
 """A target is where a graph runs: Comfy Cloud or a local ComfyUI. Steps (pipeline/steps.py) are written once, in cloud-canonical
 graph form, against this interface; the runner (pipeline/runner.py) is the only loop that drives it.
 
-A target turns a StageJob into a saved image:
+A target turns a StageJob into its saved outputs (a still, a clip):
     graph = target.prepare(canonical_graph)      # identity for the cloud; model/node names for a local machine
     target.check(graph)                          # problems it would reject, [] if fine
     target.before_batch(jobs)                    # e.g. unload models the next batch doesn't need
     target.submit(job) for every job             # all queued up front, so the whole queue is visible
     for job in target.collect(jobs): ...         # yields each job as it finishes (job.final set, or job.error)
     target.cancel(prompt_ids)                    # pull them off the queue (interrupt the running one): the job queue's cancel
+
+Targets: cloud (Comfy Cloud), local (a ComfyUI: this machine, or any URL), runpod (the pod: a local target at its URL).
 """
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -26,7 +28,10 @@ class StageJob:
     final_node: str = "436"
     node_labels: dict = field(default_factory=dict)
     handle: object = None         # target-specific (prompt id, restart count, ...)
-    final: Path | None = None     # debug_dir/final.png once done
+    final: Path | None = None     # debug_dir/final.<ext> once done (the final node's first file: a .png still, an .mp4 clip)
+    tag: str = ""                 # "stage_N" (or "stage_N.tK"): the name in logs and ::event lines
+    keep: tuple = ()              # output nodes besides final_node whose files are saved (e.g. animate's RIFE clip)
+    outputs: list = field(default_factory=list)  # [(node_id, path)] of every saved output file
     error: str | None = None
     cold: bool = False            # the first job after models were unloaded also pays the load
     waited: float = 0.0
@@ -59,6 +64,11 @@ class Target:
 
     def collect(self, jobs: list):
         raise NotImplementedError
+
+    def pending(self, job: StageJob) -> bool:
+        """Whether the job still waits in the target's queue (not started): the runner may then swap its graph for an edited one.
+        False where it can't tell (the cloud)."""
+        return False
 
     def cancel(self, prompt_ids: list) -> int:
         """Remove these prompts from the target's queue, interrupting the one running; returns how many it was asked to drop."""

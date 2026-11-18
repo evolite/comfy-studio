@@ -82,13 +82,10 @@ ACTIONS = {
     "local_new": (["generate", "--local", "--new"], "paid", "local"),  # fresh cloud preview, then the local IL pass
     **{action: (["generate", *flags], "free" if target == "local" else "paid", target)
        for (_, target), (action, flags) in steps.ACTION_IDS.items()},
-    "animate": (["animate"], "paid", "cloud"),
-    "animate_rife": (["animate", "--rife"], "paid", "cloud"),  # the same cloud job also interpolates -> interp/videos/
-    "interpolate": (["interpolate"], "free", "local"),
+    "animate_rife": (["animate"], "paid", "cloud"),  # i2v + RIFE in the same job: <folder>/videos/ and interp/videos/
     "edit": (["edit"], "free", "free"),
-    "recover": (["recover"], "free", "free"),  # save cloud clips an interrupted animate run left behind (started by the server itself)
 }
-ANIMATE = ("animate", "animate_rife")  # build_argv pins their --target (the ⚙ setting at submit time); runpod ones run in the runpod lane
+ANIMATE = ("animate_rife",)  # build_argv pins their --target (the ⚙ setting at submit time); runpod ones run in the runpod lane
 EVENT = "::event "  # pipeline/events.py PREFIX: a machine-readable progress line (stage status, timings, prompt ids)
 LOCAL_DEFAULT = config.LOCAL_COMFY_URL
 EDIT_FLAGS = {"audio": "--audio", "beat_times_file": "--beat-times-file", "start_time": "--start-time",
@@ -281,7 +278,7 @@ class Manager:
             self._check_motion(cfg, stages)
         base = ACTIONS[action][0]
         argv = [sys.executable, str(ROOT / "project.py"), project, *base]
-        if action in ("animate", "animate_rife", "interpolate"):
+        if action in ANIMATE:
             return argv + self._clip_argv(action, req, folder, stages)
         if action == "edit":
             return argv + self.edit_args(d, project, req, folder, stages)
@@ -289,13 +286,8 @@ class Manager:
 
     @staticmethod
     def _clip_argv(action, req, folder, stages):
-        """The arguments of a step that works on a folder's clips (animate, interpolate)."""
-        argv = ([folder] if folder else []) + list(map(str, stages))
-        if action in ANIMATE:
-            argv += ["--target", config.animate_target()]
-        if action == "interpolate" and req.get("server"):
-            argv += ["--server", req["server"]]
-        return argv
+        """animate's arguments: the stills' folder, the stages, and the ⚙ animate target at submit time."""
+        return ([folder] if folder else []) + list(map(str, stages)) + ["--target", config.animate_target()]
 
     @staticmethod
     def _check_motion(cfg: dict, stages: list) -> None:

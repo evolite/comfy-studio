@@ -103,7 +103,7 @@ def test_job_flags_a_memory_check_free():
 
 def test_job_state_comes_from_event_lines():
     from jobs import Job
-    j = Job("j1", "p", "animate", ["py", "project.py", "animate", "--target", "cloud"], {})
+    j = Job("j1", "p", "animate_rife", ["py", "project.py", "animate", "--target", "cloud"], {})
     j.emit('::event {"stage": "3", "status": "skipped"}')
     j.emit('::event {"stage": "1", "status": "submitted", "prompt_id": "abc", "expected": 40}')
     j.emit("  [stage_1] FAILED looking text without an event changes nothing")
@@ -129,18 +129,6 @@ def test_stale_clips_flag_clips_older_than_their_source():
         os.utime(d / rel, (t, t))
     fs = client().get("/api/projects/20261001_stale").json()["folders"]
     assert fs["hires"]["stale_clips"] == [1] and fs["interp"]["stale_clips"] == [1]
-
-
-def test_recover_job_is_queued_for_orphaned_cloud_clips():
-    from queue_daemon import Daemon
-    d = config.PIPELINES_DIR / "20261001_orphan"
-    (d / "hires" / "_debug" / "i2v_pending").mkdir(parents=True)
-    (d / "project.json").write_text('{"engine": "full", "stages": [{"id": 1}]}')
-    (d / "hires" / "_debug" / "i2v_pending" / "stage_1.json").write_text('{"prompt_id": "x", "stage": 1, "pid": 0}')
-    Daemon.recover_orphans()
-    assert [(j.project, j.action, j.argv[-1]) for j in _jobs()] == [("20261001_orphan", "recover", "recover")]
-    Daemon.recover_orphans()  # already queued: not twice
-    assert len(_jobs()) == 1
 
 
 def test_civitai_post_exports_still_and_clip_pairs(monkeypatch):
@@ -242,7 +230,7 @@ def test_notify_pushes_each_time_the_queue_empties(monkeypatch):
     time.sleep(0.05)
     assert sent == [] and Manager.notify_armed()
     a = add(status="running")
-    b = add("animate", argv=["py", "project.py", "animate", "--target", "cloud"])
+    b = add("animate_rife", argv=["py", "project.py", "animate", "--target", "cloud"])
     set_(a, "done", time.time())
     notify()
     time.sleep(0.05)
@@ -250,7 +238,7 @@ def test_notify_pushes_each_time_the_queue_empties(monkeypatch):
     set_(b, "failed", time.time())
     notify()
     wait(1)
-    assert sent[0] == f"Queue empty — 1 done, 1 failed\n✗ {b} animate" and Manager.notify_armed()  # job id, never the project name
+    assert sent[0] == f"Queue empty — 1 done, 1 failed\n✗ {b} animate_rife" and Manager.notify_armed()  # job id, never the project name
     notify()
     time.sleep(0.05)
     assert len(sent) == 1  # nothing new ran: one push per emptying
@@ -307,18 +295,18 @@ def test_animate_batch_accumulates_dedups_and_fires_at_size(monkeypatch):
     _batch_project()
     monkeypatch.setattr(config, "animate_batch_size", lambda: 2)
     m = Manager()
-    r1 = m.add_to_batch("20261010_batch", "animate", {"stages": [1]})
+    r1 = m.add_to_batch("20261010_batch", "animate_rife", {"stages": [1]})
     assert r1["job"] is None and r1["pending"] == 1 and not _jobs()
-    again = m.add_to_batch("20261010_batch", "animate", {"stages": [1]})  # a repeat click doesn't double-queue
+    again = m.add_to_batch("20261010_batch", "animate_rife", {"stages": [1]})  # a repeat click doesn't double-queue
     assert again["pending"] == 1 and not _jobs()
-    r2 = m.add_to_batch("20261010_batch", "animate", {"stages": [2]})
+    r2 = m.add_to_batch("20261010_batch", "animate_rife", {"stages": [2]})
     assert r2["job"] is not None and len(_jobs()) == 1
     job = _jobs()[0]
     assert job.req["stages"] == [1, 2] and m.batch_state() == []
     with pytest.raises(ApiError):  # only animate actions batch
         m.add_to_batch("20261010_batch", "preview", {"stages": [1]})
     with pytest.raises(ApiError):
-        m.add_to_batch("20261010_batch", "animate", {"stages": []})
+        m.add_to_batch("20261010_batch", "animate_rife", {"stages": []})
 
 
 def test_animate_batch_keys_flush_and_clear(monkeypatch):
@@ -326,15 +314,15 @@ def test_animate_batch_keys_flush_and_clear(monkeypatch):
     _batch_project()
     monkeypatch.setattr(config, "animate_batch_size", lambda: 5)
     m = Manager()
-    m.add_to_batch("20261010_batch", "animate", {"stages": [1], "folder": "hires"})
-    m.add_to_batch("20261010_batch", "animate", {"stages": [2], "folder": ""})
+    m.add_to_batch("20261010_batch", "animate_rife", {"stages": [1], "folder": "hires"})
+    m.add_to_batch("20261010_batch", "animate_rife", {"stages": [2], "folder": ""})
     m.add_to_batch("20261010_batch", "animate_rife", {"stages": [3], "folder": "hires"})
     state = {(b["action"], b["folder"]): b["stages"] for b in m.batch_state()}
-    assert state == {("animate", "hires"): [1], ("animate", ""): [2], ("animate_rife", "hires"): [3]}
+    assert state == {("animate_rife", "hires"): [1, 3], ("animate_rife", ""): [2]}
     r = m.flush_batch()  # "Send now": everything fires even below the size
-    assert len(r["sent"]) == 3 and r["pending"] == [] and len(_jobs()) == 3
-    assert {(j.action, j.req.get("folder") or "") for j in _jobs()} == {("animate", "hires"), ("animate", ""), ("animate_rife", "hires")}
-    m.add_to_batch("20261010_batch", "animate", {"stages": [1]})
+    assert len(r["sent"]) == 2 and r["pending"] == [] and len(_jobs()) == 2
+    assert {(j.action, j.req.get("folder") or "") for j in _jobs()} == {("animate_rife", "hires"), ("animate_rife", "")}
+    m.add_to_batch("20261010_batch", "animate_rife", {"stages": [1]})
     m.clear_batch()
     assert m.batch_state() == []
 
@@ -347,15 +335,15 @@ def test_animate_batch_spans_projects(monkeypatch):
     _batch_project("20261010_batch_b")
     monkeypatch.setattr(config, "animate_batch_size", lambda: 3)
     m = Manager()
-    assert m.add_to_batch("20261010_batch_a", "animate", {"stages": [1, 2]})["pending"] == 2
+    assert m.add_to_batch("20261010_batch_a", "animate_rife", {"stages": [1, 2]})["pending"] == 2
     assert {b["project"] for b in m.batch_state()} == {"20261010_batch_a"}
-    r = m.add_to_batch("20261010_batch_b", "animate", {"stages": [1]})  # the total reaches the size: both projects fire
+    r = m.add_to_batch("20261010_batch_b", "animate_rife", {"stages": [1]})  # the total reaches the size: both projects fire
     assert r["job"]["project"] == "20261010_batch_b" and r["pending"] == 0 and m.batch_state() == []
     assert {j.project: j.req["stages"] for j in _jobs()} == {"20261010_batch_a": [1, 2], "20261010_batch_b": [1]}
     with pytest.raises(ApiError):  # a click that can't run is refused when it is made, not held
-        m.add_to_batch("gone_project", "animate", {"stages": [1]})
+        m.add_to_batch("gone_project", "animate_rife", {"stages": [1]})
     assert m.batch_state() == []
-    m.add_to_batch("20261010_batch_a", "animate", {"stages": [3]})
+    m.add_to_batch("20261010_batch_a", "animate_rife", {"stages": [3]})
     m.flush_batch()
     assert any(j.req["stages"] == [3] for j in _jobs())
 
@@ -365,10 +353,10 @@ def test_held_batch_survives_a_new_manager(monkeypatch):
     from jobs import Manager
     _batch_project()
     monkeypatch.setattr(config, "animate_batch_size", lambda: 3)
-    Manager().add_to_batch("20261010_batch", "animate", {"stages": [1, 2]})
+    Manager().add_to_batch("20261010_batch", "animate_rife", {"stages": [1, 2]})
     m = Manager()
     assert m.batch_state()[0]["stages"] == [1, 2] and not _jobs() and not m.busy()
-    assert m.add_to_batch("20261010_batch", "animate", {"stages": [3]})["job"]["req"]["stages"] == [1, 2, 3]
+    assert m.add_to_batch("20261010_batch", "animate_rife", {"stages": [3]})["job"]["req"]["stages"] == [1, 2, 3]
 
 
 def test_animate_batch_endpoints(monkeypatch):
@@ -376,17 +364,17 @@ def test_animate_batch_endpoints(monkeypatch):
     monkeypatch.setattr(config, "animate_target", lambda: "runpod")
     monkeypatch.setattr(config, "animate_batch_size", lambda: 2)
     c = client()
-    r = c.post("/api/projects/20261010_batchhttp/animate-batch", json={"action": "animate", "stages": [1]}).json()
+    r = c.post("/api/projects/20261010_batchhttp/animate-batch", json={"action": "animate_rife", "stages": [1]}).json()
     assert r["job"] is None and r["pending"] == 1
     st = c.get("/api/animate-batch").json()
     assert st["size"] == 2 and st["pending"][0]["stages"] == [1]
-    r = c.post("/api/projects/20261010_batchhttp/animate-batch", json={"action": "animate", "stages": [2]}).json()
+    r = c.post("/api/projects/20261010_batchhttp/animate-batch", json={"action": "animate_rife", "stages": [2]}).json()
     job = r["job"]
     assert job and job["lane"] == "runpod" and job["req"]["stages"] == [1, 2] and "--target runpod" in job["argv"]
     assert c.get("/api/animate-batch").json()["pending"] == []
-    c.post("/api/projects/20261010_batchhttp/animate-batch", json={"action": "animate", "stages": [3]})  # below the size
+    c.post("/api/projects/20261010_batchhttp/animate-batch", json={"action": "animate_rife", "stages": [3]})  # below the size
     assert c.post("/api/animate-batch/flush").json()["sent"]
-    c.post("/api/projects/20261010_batchhttp/animate-batch", json={"action": "animate", "stages": [1]})
+    c.post("/api/projects/20261010_batchhttp/animate-batch", json={"action": "animate_rife", "stages": [1]})
     assert c.delete("/api/animate-batch").json() == {"cleared": True}
     assert c.get("/api/animate-batch").json()["pending"] == []
     assert c.post("/api/projects/20261010_batchhttp/animate-batch", json={"action": "preview", "stages": [1]}).status_code == 400
@@ -404,7 +392,7 @@ def test_animate_refused_without_motion(monkeypatch):
     (d / "project.json").write_text(json.dumps(cfg))
     m = Manager()
     with pytest.raises(ApiError, match=r"stages \[2\].*motion"):
-        m.submit("20261010_batch", "animate", {"stages": [1, 2]})
+        m.submit("20261010_batch", "animate_rife", {"stages": [1, 2]})
     assert not _jobs()
 
 

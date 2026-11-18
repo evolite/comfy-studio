@@ -17,9 +17,9 @@ from targets.base import StageJob, TargetUnavailable  # noqa: E402
 def _needs_of(step, ctx, numbers) -> dict:
     """The step's input folder per stage ({} when it starts from text); exits naming stages whose input file is missing."""
     needs = {n: step.needs(ctx, n) if callable(step.needs) else step.needs for n in numbers} if step.needs else {}
-    missing = [n for n, f in needs.items() if not (ctx.d / f / f"stage_{n}.png").exists()]
+    missing = [n for n, f in needs.items() if not (ctx.d / f / step.input.format(n=n)).exists()]
     if missing:
-        sys.exit(f"stages {missing}: no {'/'.join(sorted({needs[n] for n in missing}))}/stage_N.png yet -- "
+        sys.exit(f"stages {missing}: no {'/'.join(sorted({needs[n] for n in missing}))}/{step.input.format(n='N')} yet -- "
                  + step.needs_hint.format(name=ctx.name, stages=" ".join(map(str, missing))))
     return needs
 
@@ -29,7 +29,8 @@ def _upload_needs(step, target, ctx, numbers, needs, dry_run) -> dict:
     images = {}
     for n in numbers:
         if n in needs:
-            images[n] = "x" if dry_run else target.upload(ctx.d / needs[n] / f"stage_{n}.png", f"{step.name}_{ctx.name}_{n}.png")
+            path = ctx.d / needs[n] / step.input.format(n=n)
+            images[n] = "x" if dry_run else target.upload(path, f"{step.name}_{ctx.name}_{n}{path.suffix}")
     return images
 
 
@@ -38,12 +39,13 @@ def _build_jobs(step, target, ctx, numbers, images, out, final_node, labels, tak
     jobs = []
     for k in range(1, takes + 1):
         for n in numbers:
-            stage = ctx.stages[n] if takes == 1 else {**ctx.stages[n], "seed": secrets.randbits(48)}
+            stage = {**ctx.stages[n], "id": n, **({"seed": secrets.randbits(48)} if takes > 1 else {})}
             graph = target.prepare(step.graph(ctx, stage, images.get(n), target))
             tag = f"stage_{n}" + (f".t{k}" if takes > 1 else "")
             label = f"{ctx.name} stage {n}" + (f" {step.suffix}" if step.suffix else "") + (f" t{k}" if takes > 1 else "")
-            j = StageJob(n, graph, label, out / "_debug" / tag, final_node, labels)
-            j.tag, j.stage = tag, stage
+            final = step.final_for(ctx, stage) if step.final_for else final_node
+            j = StageJob(n, graph, label, out / "_debug" / (step.debug_prefix + tag), final, labels, tag=tag, keep=step.keep)
+            j.stage = stage
             jobs.append(j)
     return jobs
 
@@ -71,13 +73,21 @@ def _submit_all(step, target, ctx, numbers, reroll, out, jobs) -> None:
 
 
 def _collect_one(ctx, step, needs, out, j, got, target_name: str) -> None:
-    """Save one finished job — as a take, or over the stage file with its history entry; a failure just logs."""
+    """Save one finished job — the step's own save (a clip), as a take, or over the stage file with its history entry; a
+    failure just logs."""
+    dest = out / f"stage_{j.n}.png"
+    if j.final and step.save:
+        try:
+            dest = step.save(ctx, j, out)
+        except RuntimeError as e:
+            j.final, j.error = None, str(e)
     if not j.final:
         print(f"  [{j.tag}] FAILED: {j.error}", flush=True)
         events.stage(j.tag, "failed", error=str(j.error))
         return
-    dest = out / f"stage_{j.n}.png"
-    if step.takes:
+    if step.save:
+        pass  # saved above
+    elif step.takes:
         takes_mod.sync(ctx.d, j.n)
         rec = takes_mod.record(j.graph, j.stage, ctx.common, target_name, image_loras.resolve(j.stage.get("loras")))
         takes_mod.add(ctx.d, j.n, j.final, j.graph, rec, make_current=True)
@@ -89,6 +99,49 @@ def _collect_one(ctx, step, needs, out, j, got, target_name: str) -> None:
     got[j.n] += 1
     print(f"  [{j.tag}] done (waited {j.waited:.0f}s" + (f", processed {j.seconds:.0f}s" if j.seconds else "") + f") -> {dest}", flush=True)
     events.stage(j.tag, "done", processed=round(j.seconds) if j.seconds else None)
+
+
+class _EditWatch:
+    """Edits made while a run waits reach the stages still queued: after each finished stage, a changed project.json
+    (ctx.reload) rebuilds the graphs of the jobs the target says haven't started; one that differs is pulled off the queue
+    and queued again with the new graph (same seed). Targets that can't tell what has started (the cloud) keep theirs."""
+
+    def __init__(self, step, target, ctx, images, jobs, takes):
+        self.step, self.target, self.ctx, self.images, self.jobs = step, target, ctx, images, jobs
+        self.on = takes == 1 and callable(getattr(ctx, "reload", None))
+        self.mtime = self._mtime()
+
+    def _mtime(self):
+        try:
+            return (self.ctx.d / "project.json").stat().st_mtime
+        except OSError:
+            return None
+
+    def check(self, finished: set) -> None:
+        if not self.on or self._mtime() == self.mtime:
+            return
+        self.mtime = self._mtime()
+        self.ctx.stages = self.ctx.reload()
+        for j in self.jobs:
+            if j.tag in finished or j.n not in self.ctx.stages or not self.target.pending(j):
+                continue
+            stage = {**self.ctx.stages[j.n], "id": j.n}
+            graph = _same_seeds(self.target.prepare(self.step.graph(self.ctx, stage, self.images.get(j.n), self.target)), j.graph)
+            if graph == j.graph:
+                continue
+            self.target.cancel([j.handle])
+            j.graph, j.stage = graph, stage
+            print(f"  [{j.tag}] prompt edited while it waited: queued again with the new graph", flush=True)
+            self.target.submit(j)
+
+
+def _same_seeds(graph: dict, old: dict) -> dict:
+    """The rebuilt graph with the old one's seeds (a rebuild rolls a fresh random seed; that alone isn't an edit)."""
+    for nid, node in graph.items():
+        for k in ("seed", "noise_seed"):
+            if k in node.get("inputs", {}) and k in old.get(nid, {}).get("inputs", {}):
+                node["inputs"][k] = old[nid]["inputs"][k]
+    return graph
 
 
 def _wrap_up(step, ctx, out, numbers, got, takes) -> list:
@@ -114,7 +167,8 @@ def run_step(step, target, ctx, numbers, dry_run=False, reroll=False, takes=1) -
         sys.exit(f"{step.name} doesn't run on the {target.name} target with the {ctx.engine_name} engine "
                  f"(targets: {', '.join(step.targets)}; engines: {', '.join(step.engines or ['any'])})")
     needs = _needs_of(step, ctx, numbers)
-    out = ctx.d / step.folder if step.folder else ctx.d
+    folder = step.folder(ctx) if callable(step.folder) else step.folder
+    out = ctx.d / folder if folder else ctx.d
     final_node, labels = step.final(ctx)
     try:
         if takes > 1 and (any("seed" in ctx.stages[n] for n in numbers) or "seed" in getattr(ctx, "cfg", {})):
@@ -129,9 +183,12 @@ def run_step(step, target, ctx, numbers, dry_run=False, reroll=False, takes=1) -
             sys.exit(f"the {target.name} target can't run these stages (nothing was queued):\n"
                      + "\n".join(f"  stage_{n}: {x}" for n, p in problems.items() for x in p))
         _submit_all(step, target, ctx, numbers, reroll, out, jobs)
-        got = dict.fromkeys(numbers, 0)
+        got, finished = dict.fromkeys(numbers, 0), set()
+        watch = _EditWatch(step, target, ctx, images, jobs, takes)
         for j in target.collect(jobs):
             _collect_one(ctx, step, needs, out, j, got, target.name)
+            finished.add(j.tag)
+            watch.check(finished)
     except TargetUnavailable as e:
         sys.exit(str(e))
     return _wrap_up(step, ctx, out, numbers, got, takes)

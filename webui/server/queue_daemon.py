@@ -6,8 +6,7 @@ daemon reattaches to every job still marked running (wrapper alive: keep reading
 exit code from the rc file, else failed). While a job runs, the daemon reads its log as it grows, parses it (jobs.Job.emit)
 and stores the state (at most every SAVE_EVERY s). It also kills jobs the server asked to cancel (and clears what they
 queued on the backend), submits a failed lane job again RETRY_AFTER later (up to RETRY_TIMES), copies finished edits to
-config.PUBLISH_DIR, pushes the 🔔 notification when the queue empties, and at start queues `recover` jobs for animate runs
-a previous restart cut off.
+config.PUBLISH_DIR and pushes the 🔔 notification when the queue empties.
 
     python3 webui/server/queue_daemon.py
 """
@@ -44,7 +43,6 @@ class Daemon:
     def run(self):
         jobstore.LOG_DIR.mkdir(parents=True, exist_ok=True)
         self.reattach()
-        self.recover_orphans()
         print(f"comfy-queue: watching {jobstore.DB}", flush=True)
         while True:
             try:
@@ -186,21 +184,6 @@ class Daemon:
             else:
                 self._read(job)
                 self.finish(job)
-
-    @staticmethod
-    def recover_orphans():
-        """A project with i2v_pending records (animate runs a restart cut off) gets a `recover` job that waits for those
-        cloud renders and saves them, unless an animate or recover job of that project is still active."""
-        from projects import PIPELINES
-        active = {(j.project, j.action) for j in manager.active()}
-        for d in sorted(PIPELINES.iterdir()) if PIPELINES.is_dir() else ():
-            if any(p == d.name and a in ("animate", "animate_rife", "recover") for p, a in active):
-                continue
-            if (d / "project.json").exists() and any(d.glob("**/_debug/i2v_pending/stage_*.json")):
-                try:
-                    manager.submit(d.name, "recover", {})
-                except ApiError:
-                    pass
 
     # --- notifications -------------------------------------------------------------------------------------------------
     @staticmethod

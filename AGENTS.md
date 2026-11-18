@@ -21,7 +21,7 @@ config.py      every path/URL/machine setting; library_file / library_merged / s
 pipeline/      image steps: steps.py (preview, il, face, hires, finish, main) run on a target (targets/cloud.py, targets/local.py,
                same interface) through runner.py; engines generate*.py + templates/; graph_settings.py (settings keys);
                takes.py (preview takes); civitai_meta.py (Civitai-ready copies); lora_registry.py, voice_registry.py
-video/         animate_pipeline.py (i2v), interpolate.py (RIFE), make_edit.py (edit), templates/
+video/         animate_pipeline.py (i2v graphs), interpolate.py (RIFE nodes), make_edit.py (edit), templates/
 runpod/        the RunPod animate pod's volume (seed.py fills it from the manifest), preflight (check.py), start command
                (watchdog.sh); lifecycle in pipeline/runpod_pod.py
 webui/         web UI + API (FastAPI + React, `webui/ui`, `npm run build`), service `comfy-studio` on :8191 (127.0.0.1, no auth)
@@ -75,8 +75,7 @@ seeds and settings used.
 | ② Upscale | `generate [N..] --local` (IL) / `--il` (cloud) / `--hires --local` (SesquiLSR) | `IL/`, `hires/` |
 | (face) | `generate N.. --face [--local]` | replaces `IL/stage_N.png` |
 | ③ Finish | `generate [N..] --finish [--local] [--from hires\|IL]` (SeedVR2, optional) | `finish/` |
-| ④ Animate | `animate [folder] [N..] [--rife] [--target cloud\|runpod]` (paid; `--rife` = Animate + RIFE in the same job; the web UI always runs `--rife` and reviews `interp/videos/` in its ④ Animate phase) | `<folder>/videos/` (+ `interp/videos/` with `--rife`) |
-| (interpolate) | `interpolate [folder] [N..]` (RIFE ×2 → 48 fps, local: for 24 fps clips made without `--rife`) | `interp/videos/` |
+| ④ Animate | `animate [folder] [N..] [--target cloud\|runpod] [--dry-run]` (paid; i2v + RIFE ×2 in the same job; `--dry-run` builds every clip graph for free) | `<folder>/videos/` (24 fps) + `interp/videos/` (48 fps) |
 | ⑥ Edit | `edit [folder] [animate\|stills] [N..] [make_edit args]` | `<folder>/edits/` |
 | ⑦ Civitai | web UI Civitai tab: best still (with Civitai metadata) + clip per picked stage | `data/civitai/<project>_<time>/` |
 
@@ -94,7 +93,10 @@ is in frame, where, which frame side the subject's right side is on, what mirror
 - **Animate target** (⚙ page switch, default `cloud`; `--target`): Comfy Cloud, or your RunPod pod (H3 only), which `animate`
   starts on demand and which **bills per hour while up** and deletes itself after `RUNPOD_IDLE_MINUTES` idle. Pod settings:
   `RUNPOD_*` in `config.py`. "Start batch" (runpod target only) queues Animate clicks server-side until the ⚙ batch size is
-  reached, so a batch shares one pod start (`Manager.animate_batch` in `webui/server/jobs.py`).
+  reached, so a batch shares one pod start (`held` jobs in the job store, `Manager.add_to_batch`).
+- **Every render goes one way**: `pipeline/runner.py` runs a step (`pipeline/steps.py`: preview … finish, animate) on a target
+  (`pipeline/targets/`: cloud, local, runpod = the pod as a ComfyUI URL). An edit to a stage still waiting in a local/pod queue is
+  picked up: the runner swaps its graph after each finished stage.
 - **`animate` spends credits for every missing clip it finds** — never use it as a dry check, and never start one while another
   is in flight. `duration` is free-form (1–8 s, snapped to the 24 fps frame grid).
 - **Sound** (Compose): the clips' own audio is the base; music is an optional layer (off by default), beat sync an add-on to it.

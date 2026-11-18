@@ -20,6 +20,7 @@ import timings
 import events  # noqa: E402
 
 from .base import StageJob, Target, TargetUnavailable  # noqa: E402
+from .cloud import final_of, save_outputs  # noqa: E402  # the same /history output shape as a cloud job
 from .models import local_lora, local_models  # noqa: E402
 
 CLIENT_ID = "comfycloud-pipeline"  # ComfyUI sends step progress only to the submitting client id; dashboard.py listens as this one
@@ -118,8 +119,8 @@ def localize_krea(graph: dict) -> dict:
 
 
 def map_names(g: dict) -> dict:
-    """Cloud model names -> local files, in place (an unmapped IL checkpoint is assumed to be in the local IL folder, a bare
-    LoRA name in `il_lora_folder`)."""
+    """Cloud model names -> local files, in place (an unmapped checkpoint loader's IL checkpoint is assumed to be in the local IL
+    folder, a bare LoRA name in `il_lora_folder`; other nodes' `ckpt_name`, e.g. RIFE's model, stay as they are)."""
     m = local_models()
     for node in g.values():
         ins = node["inputs"]
@@ -129,7 +130,7 @@ def map_names(g: dict) -> dict:
                     ins[k] = m["model_names"][name]
                 case ("lora_name", str() as name) if "/" not in name:  # Krea2 ones were mapped by localize_krea
                     ins[k] = local_lora(name, krea=False)
-                case ("ckpt_name", str() as name) if "/" not in name and not name.startswith("krea"):
+                case ("ckpt_name", str() as name) if "Checkpoint" in node["class_type"] and "/" not in name and not name.startswith("krea"):
                     ins[k] = f"{m['il_checkpoint_folder']}{name}"
     return g
 
@@ -219,23 +220,23 @@ def download(server: str, file: dict, dest: Path) -> None:
     dest.write_bytes(_call(server, f"/view?{q}"))
 
 
-def wait(server: str, pid: str, final_node: str, dest: Path, timeout: float = 1800.0):
-    """Wait for a queued job, save final_node's first image to dest, and return its processing seconds (None if unknown)."""
+def wait(server: str, pid: str, timeout: float = 1800.0) -> dict:
+    """Wait for a queued job; returns its /history entry once it succeeded (outputs, status timestamps)."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         hist = json.loads(_call(server, f"/history/{pid}")).get(pid)
         if hist and hist["status"].get("completed") is not None:
             if hist["status"]["status_str"] != "success":
-                raise RuntimeError(f"local job failed: {json.dumps(hist['status'])[:800]}")
-            download(server, hist["outputs"][final_node]["images"][0], dest)
-            return processing_seconds(hist)
+                raise RuntimeError(f"job failed on {server}: {json.dumps(hist['status'])[:800]}")
+            return hist
         time.sleep(2)
-    raise TimeoutError(f"local job {pid} did not finish in {timeout:.0f}s")
+    raise TimeoutError(f"job {pid} did not finish in {timeout:.0f}s on {server}")
 
 
 class LocalTarget(Target):
     name = "local"
     lane = "local"
+    timeout = 1800.0  # seconds a job may take from when the previous one finished
 
     def __init__(self, server: str = None):
         self.server = (server or config.LOCAL_COMFY_URL).rstrip("/")
@@ -291,8 +292,20 @@ class LocalTarget(Target):
         except (urllib.error.URLError, ConnectionError) as e:
             raise self._unreachable(e)
         eta = timings.expected(timings.sig(job.graph), job.cold)
-        print(f"  [{job.debug_dir.name}] queued" + (f" expected {eta:.0f}s" if eta else ""), flush=True)
-        events.stage(job.debug_dir.name, "queued", prompt_id=job.handle, expected=round(eta) if eta else None)
+        print(f"  [{job.tag}] queued" + (f" expected {eta:.0f}s" if eta else ""), flush=True)
+        events.stage(job.tag, "queued", prompt_id=job.handle, expected=round(eta) if eta else None)
+
+    def pending(self, job: StageJob) -> bool:
+        try:
+            q = json.loads(_call(self.server, "/queue"))
+        except (OSError, ValueError):
+            return False
+        return any(len(item) > 1 and item[1] == job.handle for item in q.get("queue_pending", []))
+
+    def finished(self, job: StageJob) -> None:
+        """A job that succeeded: its time goes into the baselines (pipeline/timings.py)."""
+        if job.seconds:
+            timings.record(timings.sig(job.graph), job.seconds, job.cold)
 
     def cancel(self, prompt_ids: list) -> int:
         for pid in prompt_ids:
@@ -306,12 +319,15 @@ class LocalTarget(Target):
         """ComfyUI runs its queue in order, so wait for the jobs in order."""
         for job in jobs:
             t = time.time()
-            final = job.debug_dir / "final.png"
             try:
-                job.seconds = wait(self.server, job.handle, job.final_node, final)
-                if job.seconds:
-                    timings.record(timings.sig(job.graph), job.seconds, job.cold)
-                job.final = final
+                hist = wait(self.server, job.handle, self.timeout)
+                job.seconds = processing_seconds(hist)
+                job.outputs = save_outputs(hist, job.debug_dir, job.node_labels, job.final_node, only={job.final_node, *job.keep},
+                                           fetch=lambda f, dest: download(self.server, f, dest))
+                job.final = final_of(job.debug_dir)
+                if not job.final:
+                    job.error = f"the final node {job.final_node} saved nothing -- check {job.debug_dir}"
+                self.finished(job)
             except (urllib.error.URLError, ConnectionError) as e:
                 raise self._unreachable(e, "lost") from e
             except TimeoutError as e:

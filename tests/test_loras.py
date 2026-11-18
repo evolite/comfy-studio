@@ -175,24 +175,6 @@ def test_video_trigger_is_put_in_front_of_the_motion_once(lib):
     assert lora_registry.with_video_triggers("she moves", {"tv": 0}) == "she moves"
 
 
-def test_recover_saves_an_orphaned_clip_and_skips_live_runs(tmp_path, monkeypatch):
-    import json
-    import os
-    import animate_pipeline as a
-    pend = tmp_path / "_debug" / a.PENDING
-    pend.mkdir(parents=True)
-    (pend / "stage_1.json").write_text(json.dumps({"prompt_id": "p1", "stage": 1, "engine": "minimax", "loras": {}, "seed": 5, "audio": False, "rife_dir": None, "pid": 0}))
-    (pend / "stage_2.json").write_text(json.dumps({"prompt_id": "p2", "stage": 2, "engine": "minimax", "loras": {}, "seed": 5, "audio": False, "rife_dir": None, "pid": os.getpid()}))
-    monkeypatch.setattr(a, "_alive", lambda pid: pid == os.getpid())
-    monkeypatch.setattr(a.api, "job_state", lambda pid: ("success", None))
-    monkeypatch.setattr(a.api, "fetch_job", lambda pid: {"id": pid})
-    saved = []
-    monkeypatch.setattr(a, "save_clip", lambda job, n, *rest: saved.append((job["id"], n)))
-    assert a.recover(tmp_path) == 0
-    assert saved == [("p1", 1)]
-    assert not (pend / "stage_1.json").exists() and (pend / "stage_2.json").exists()  # the live run saves its own
-
-
 def test_each_engine_chains_only_its_own_files():
     import generate_krea2
     import generate_moss

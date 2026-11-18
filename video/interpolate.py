@@ -8,11 +8,9 @@ Normally run via `project.py <name> interpolate [folder] [N..]`: <folder>/videos
 import json
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "pipeline"))
-from targets import local  # noqa: E402
 
 MULTIPLIER = 2
 FOLDER = "interp"  # results land in <project>/interp/videos/, a clip folder of its own (the board's Interpolate phase, Compose)
@@ -48,24 +46,3 @@ def graph(name: str, fps: float, audio: bool) -> dict:
         "5": {"class_type": "SaveVideo", "inputs": {"video": ["4", 0], "filename_prefix": "video/interpolated", "format": "auto",
                                                     "format.codec": "auto", "codec": "auto"}},
     }
-
-
-def interpolate(clip: Path, dest: Path, server: str, label: str, timeout: float = 1800.0):
-    """Render the interpolated clip to dest; returns ComfyUI's processing seconds (None if unknown)."""
-    fps, audio = probe(clip)
-    name = local.upload(server, clip, f"interp_{clip.parent.parent.name}_{clip.name}")
-    pid = local.submit(server, graph(name, fps, audio), label)
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        hist = json.loads(local._call(server, f"/history/{pid}")).get(pid)
-        if hist and hist["status"].get("completed") is not None:
-            if hist["status"]["status_str"] != "success":
-                raise RuntimeError(f"local job failed: {json.dumps(hist['status'])[:800]}")
-            out = hist["outputs"]["5"]
-            f = next(iter(out.get("images") or out.get("videos") or out.get("gifs")))
-            q = f"filename={f['filename']}&subfolder={f.get('subfolder', '')}&type={f.get('type', 'output')}"
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(local._call(server, f"/view?{q}"))
-            return local.processing_seconds(hist)
-        time.sleep(2)
-    raise TimeoutError(f"local job {pid} did not finish in {timeout:.0f}s")
