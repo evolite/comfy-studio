@@ -34,6 +34,21 @@ const statusPill = (j: Job) => {
   return "";
 };
 
+/** A running job's stages, each unfinished one with its own ⏹ (stops just that stage; the others go on). */
+function StageStops({ j }: { readonly j: Job }) {
+  const tags = [...new Set([...((j.req.stages as number[] | undefined) ?? []).map(String).filter((id) => !Object.keys(j.stages).some((k) => k === id || k.startsWith(`${id}.t`))), ...Object.keys(j.stages)])];
+  if (tags.length < 2) return null;  // one stage: the job's own ⏹
+  const over = (t: string) => ["done", "failed", "cancelled"].includes(j.stages[t]);
+  return (
+    <div className="jtook dim">
+      {tags.map((t) => over(t)
+        ? <span key={t} title={j.stages[t]}>#{t.replace(".t", " take ")} {j.stages[t] === "done" ? "✓" : j.stages[t] === "cancelled" ? "⏹" : "✗"}</span>
+        : <button key={t} type="button" className="btn sm" title={`stop stage ${t} only (${j.stages[t] ?? "waiting"}); the other stages go on`}
+            onClick={(e) => { e.stopPropagation(); void api(`/jobs/${j.id}/stages/${t}/cancel`, "POST"); }}>#{t.replace(".t", " take ")} ⏹</button>)}
+    </div>
+  );
+}
+
 export default function JobsPanel({ jobs, unseen, dismiss, onClose }: { readonly jobs: Job[]; readonly unseen: Job[]; readonly dismiss: (ids: string[]) => void; readonly onClose: () => void }) {
   const [sel, setSel] = useState<string | null>(null);
   const [lines, setLines] = useState<string[]>([]);
@@ -91,12 +106,13 @@ export default function JobsPanel({ jobs, unseen, dismiss, onClose }: { readonly
                 {(j.status === "failed" || j.status === "cancelled") && <button className="btn sm" title={`retry: submit this job again${st.length && j.action !== "edit" ? " (only the stages that didn't finish)" : ""}${j.cost === "paid" ? " — spends credits" : ""}`} onClick={(e) => { e.stopPropagation(); void api<Job>(`/jobs/${j.id}/retry`, "POST").then((n) => setSel(n.id)); }}>↻</button>}
               </div>
               {active(j) && (() => {
-                const total = st.length * Math.max(1, Number(j.req.takes) || 1) || Object.keys(j.stages).length, done = Object.values(j.stages).filter((v) => v === "done" || v === "failed").length;
+                const total = st.length * Math.max(1, Number(j.req.takes) || 1) || Object.keys(j.stages).length, done = Object.values(j.stages).filter((v) => ["done", "failed", "cancelled"].includes(v)).length;
                 const pr = j.progress;
                 const approx = pr && !pr.exact ? "~" : "";
                 const title = pr ? `${done}/${total} stages · ${approx}${fmtLeft(pr.left)} left (from past runs)` : `${done}/${total} stages`;
                 return total > 0 && <div className={`jbar ${j.status === "queued" ? "queued" : ""}`} title={title}><i style={{ width: `${(pr ? pr.fraction : done / total) * 100}%` }} /></div>;
               })()}
+              {j.status === "running" && <StageStops j={j} />}
               {j.took && Object.keys(j.took).length > 0 && <div className="jtook dim" title="time per stage: ComfyUI's processing time (model loading included for the first)">
                 {Object.entries(j.took).map(([k, s]) => <span key={k}>#{k.replace(".t", " take ")} {secs(s)}</span>)}
               </div>}

@@ -25,8 +25,6 @@ import config  # noqa: E402
 import jobstore  # noqa: E402
 from jobs import RETRY_AFTER, RETRY_TIMES, Job, edit_kind, manager, save_edit_timing, send_pushover  # noqa: E402
 from projects import ROOT, ApiError, project_dir  # noqa: E402
-import runpod_pod  # noqa: E402  # pipeline/, on sys.path via jobs
-import targets  # noqa: E402
 
 TICK = 0.5          # seconds between looks at the store (new jobs, cancels, due retries)
 SAVE_EVERY = 0.5    # a running job's state is stored at most this often (and always when it ends)
@@ -77,7 +75,8 @@ class Daemon:
         jobstore.append_log(job.id, "$ " + " ".join(job.argv[1:]))
         job.proc = subprocess.Popen(["bash", "-c", WRAP, "job", str(jobstore.log_path(job.id)), str(jobstore.rc_path(job.id)), *job.argv],
                                     cwd=ROOT, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                    env={**os.environ, "PYTHONUNBUFFERED": "1"}, start_new_session=True)
+                                    env={**os.environ, "PYTHONUNBUFFERED": "1", "STUDIO_CANCEL_FILE": str(jobstore.cancel_path(job.id))},
+                                    start_new_session=True)
         job.pid = job.proc.pid
         jobstore.save(job.to_data())
         self.follow(job)
@@ -224,21 +223,12 @@ class Daemon:
     def _cancel_remote(self, job):
         """Killing project.py leaves what it already queued on the backend: the job's target drops those prompts."""
         try:
-            target = self.target_of(job)
+            target = manager.target_of(job)
             n = target.cancel(job.prompt_ids) if target and job.prompt_ids else 0
             jobstore.append_log(job.id, f"cancelled: removed {n} job(s) from the ComfyUI queue" if n else "cancelled: nothing left in the ComfyUI queue")
         except Exception as e:  # noqa: BLE001
             jobstore.append_log(job.id, f"cancelled, but could not clear the ComfyUI queue: {e}")
 
-    @staticmethod
-    def target_of(job):
-        """Where the job's prompts are queued: the local ComfyUI it ran on, the pod (if it is still there), or Comfy Cloud."""
-        if job.lane == "runpod":
-            pod = runpod_pod.find()
-            return targets.get("local", server=runpod_pod.url(pod["id"])) if pod else None
-        if job.lane == "local":
-            return targets.get("local", server=job.req.get("server") or None)
-        return targets.get("cloud")
 
 if __name__ == "__main__":
     Daemon().run()

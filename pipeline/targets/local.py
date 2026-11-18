@@ -19,7 +19,7 @@ import config  # noqa: E402
 import timings
 import events  # noqa: E402
 
-from .base import StageJob, Target, TargetUnavailable  # noqa: E402
+from .base import CANCELLED, StageJob, Target, TargetUnavailable, cancelled  # noqa: E402
 from .cloud import final_of, save_outputs  # noqa: E402  # the same /history output shape as a cloud job
 from .models import local_lora, local_models  # noqa: E402
 
@@ -220,10 +220,13 @@ def download(server: str, file: dict, dest: Path) -> None:
     dest.write_bytes(_call(server, f"/view?{q}"))
 
 
-def wait(server: str, pid: str, timeout: float = 1800.0) -> dict:
-    """Wait for a queued job; returns its /history entry once it succeeded (outputs, status timestamps)."""
+def wait(server: str, pid: str, timeout: float = 1800.0, tag: str = "") -> dict | None:
+    """Wait for a queued job; returns its /history entry once it succeeded (outputs, status timestamps), None when its stage
+    was cancelled (base.cancelled)."""
     deadline = time.time() + timeout
     while time.time() < deadline:
+        if tag and cancelled(tag):
+            return None
         hist = json.loads(_call(server, f"/history/{pid}")).get(pid)
         if hist and hist["status"].get("completed") is not None:
             if hist["status"]["status_str"] != "success":
@@ -320,7 +323,13 @@ class LocalTarget(Target):
         for job in jobs:
             t = time.time()
             try:
-                hist = wait(self.server, job.handle, self.timeout)
+                hist = wait(self.server, job.handle, self.timeout, job.tag)
+                if hist is None:
+                    cancel(self.server, job.handle)
+                    job.error = CANCELLED
+                    job.waited = time.time() - t
+                    yield job
+                    continue
                 job.seconds = processing_seconds(hist)
                 job.outputs = save_outputs(hist, job.debug_dir, job.node_labels, job.final_node, only={job.final_node, *job.keep},
                                            fetch=lambda f, dest: download(self.server, f, dest))

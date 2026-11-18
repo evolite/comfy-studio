@@ -94,7 +94,7 @@ export type Active = { lane: "local" | "cloud"; action: string; queued: boolean;
 export const jobTakes = (j: Job) => Math.max(1, Number(j.req.takes) || 1);
 /** How many of a stage's renders in this job have finished (done or failed); keys are "N", or "N.tK" for takes. */
 export const finishedTakes = (j: Job, id: number) =>
-  Object.entries(j.stages ?? {}).filter(([k, v]) => (k === String(id) || k.startsWith(`${id}.t`)) && (v === "done" || v === "failed")).length;
+  Object.entries(j.stages ?? {}).filter(([k, v]) => (k === String(id) || k.startsWith(`${id}.t`)) && ["done", "failed", "cancelled"].includes(v)).length;
 
 /** Stage ids -> takes still to come from this project's running/queued multi-take Preview jobs (grey placeholders on the board). */
 export function pendingTakes(jobs: Job[], project: string): Record<number, number> {

@@ -760,6 +760,12 @@ def job_cancel(jid: str):
     return manager.cancel(jid).info()
 
 
+@app.post("/api/jobs/{jid}/stages/{tag}/cancel")
+def job_stage_cancel(jid: str, tag: str):
+    """Stop one stage of a running job (the others go on): tag = the stage id, or "N.tK" for one preview take."""
+    return manager.cancel_stage(jid, tag)
+
+
 @app.post("/api/jobs/{jid}/retry")
 def job_retry(jid: str):
     """Submit a failed/cancelled job again (only its unfinished stages when it named some): the new job's info."""

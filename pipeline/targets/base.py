@@ -11,12 +11,25 @@ A target turns a StageJob into its saved outputs (a still, a clip):
 
 Targets: cloud (Comfy Cloud), local (a ComfyUI: this machine, or any URL), runpod (the pod: a local target at its URL).
 """
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
+
+CANCELLED = "cancelled by you"  # a StageJob's error when the job queue cancelled just that stage
 
 
 class TargetUnavailable(RuntimeError):
     """The target can't be reached (local ComfyUI down, network gone); the message is meant for the user."""
+
+
+def cancelled(tag: str) -> bool:
+    """A stage the job queue asked to skip: its tag is a line in $STUDIO_CANCEL_FILE (the web server appends to it; the server
+    has also pulled the stage's prompt off the target's queue). Targets check it while they wait."""
+    path = os.environ.get("STUDIO_CANCEL_FILE")
+    try:
+        return bool(path) and tag in Path(path).read_text().split()
+    except OSError:
+        return False
 
 
 @dataclass

@@ -48,6 +48,11 @@ def log_path(jid: str):
     return LOG_DIR / f"{jid}.log"
 
 
+def cancel_path(jid: str):
+    """The stages of a running job to skip, one tag per line (the job's render loop reads it: STUDIO_CANCEL_FILE)."""
+    return LOG_DIR / f"{jid}.cancel"
+
+
 def rc_path(jid: str):
     """Where the job's wrapper writes the exit code once project.py ends (read by a daemon that didn't start it)."""
     return LOG_DIR / f"{jid}.rc"

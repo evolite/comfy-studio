@@ -11,7 +11,7 @@ import events  # noqa: E402
 import history  # noqa: E402
 import image_loras  # noqa: E402
 import takes as takes_mod  # noqa: E402
-from targets.base import StageJob, TargetUnavailable  # noqa: E402
+from targets.base import CANCELLED, StageJob, TargetUnavailable  # noqa: E402
 
 
 def _needs_of(step, ctx, numbers) -> dict:
@@ -76,6 +76,10 @@ def _collect_one(ctx, step, needs, out, j, got, target_name: str) -> None:
     """Save one finished job — the step's own save (a clip), as a take, or over the stage file with its history entry; a
     failure just logs."""
     dest = out / f"stage_{j.n}.png"
+    if j.error == CANCELLED:
+        print(f"  [{j.tag}] cancelled", flush=True)
+        events.stage(j.tag, "cancelled")
+        return
     if j.final and step.save:
         try:
             dest = step.save(ctx, j, out)
@@ -144,9 +148,10 @@ def _same_seeds(graph: dict, old: dict) -> dict:
     return graph
 
 
-def _wrap_up(step, ctx, out, numbers, got, takes) -> list:
-    """Run the step's after-hook and print the summary; returns the failed stage numbers."""
-    failed = [n for n in numbers if not got[n]]
+def _wrap_up(step, ctx, out, numbers, got, takes, dropped=()) -> list:
+    """Run the step's after-hook and print the summary; returns the failed stage numbers (a stage cancelled on its own,
+    `dropped`, isn't one)."""
+    failed = [n for n in numbers if not got[n] and n not in dropped]
     ok = [n for n in numbers if n not in failed]
     if step.after:
         step.after(ctx, ok, out)
@@ -189,9 +194,10 @@ def run_step(step, target, ctx, numbers, dry_run=False, reroll=False, takes=1) -
             _collect_one(ctx, step, needs, out, j, got, target.name)
             finished.add(j.tag)
             watch.check(finished)
+        dropped = {j.n for j in jobs if j.error == CANCELLED} - {n for n in numbers if got[n]}
     except TargetUnavailable as e:
         sys.exit(str(e))
-    return _wrap_up(step, ctx, out, numbers, got, takes)
+    return _wrap_up(step, ctx, out, numbers, got, takes, dropped)
 
 
 def _note_source(ctx, step, needs, n, out):

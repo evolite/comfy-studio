@@ -23,7 +23,7 @@ import timings
 import events  # noqa: E402
 from stagegraph import stage_graph  # noqa: E402
 
-from .base import StageJob, Target  # noqa: E402
+from .base import CANCELLED, StageJob, Target, cancelled  # noqa: E402
 from .models import local_models  # noqa: E402
 
 ROOT = config.ROOT
@@ -206,6 +206,8 @@ class CloudTarget(Target):
         job.handle = {"id": prompt_id, "state": "submitted", "restarts": 0, "t0": time.time()}
 
     def _finish(self, job: StageJob) -> None:
+        if job.error:  # cancelled while it waited
+            return
         h = job.handle
         if h["state"] != "success":
             job.error = f"state={h['state']}"
@@ -221,6 +223,11 @@ class CloudTarget(Target):
     def _poll_job(self, prompt_id: str, j: StageJob, pending: dict, seen: dict) -> str | None:
         """One poll round of a pending job: state-change log, terminal hand-off ("done"), or stall resubmit."""
         h = j.handle
+        if cancelled(j.tag):
+            cancel(prompt_id)
+            del pending[prompt_id]
+            j.error = CANCELLED
+            return "done"
         state, status = job_state(prompt_id)
         if state != h["state"]:
             print(f"  [{j.tag}] {state}", flush=True)

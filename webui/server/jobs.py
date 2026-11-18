@@ -25,7 +25,9 @@ from projects import PREVIEW_GATED, ROOT, ApiError, load, preview_approved, proj
 import voice_registry  # noqa: E402  # pipeline/, on sys.path via projects
 
 sys.path.insert(0, str(ROOT / "pipeline"))
+import runpod_pod  # noqa: E402
 import steps  # noqa: E402
+import targets  # noqa: E402
 
 # every finished edit is copied to config.PUBLISH_DIR when set (overwriting the previous one of the same project + source folder
 # + kind: a beat-synced and a no-music edit each keep their own copy)
@@ -119,6 +121,7 @@ class Job:
         self.attempt = 1  # auto-retries count up from the job they retry
         self.retry_at = None  # when this failed job is submitted again (None: it won't be)
         self.prompt_ids = []  # prompt ids this job queued (any backend), so cancel can pull them off that queue
+        self.stage_prompts = {}  # stage tag -> its latest prompt id (cancel one stage)
         self.last = ""  # the latest log line (the jobs panel's one-line status)
         self.pid = None  # the daemon's wrapper process (its process group = the job), so another daemon can reattach or kill it
         self.cancel_requested = False
@@ -126,7 +129,7 @@ class Job:
 
     # the state that goes into jobstore (everything but the log lines, which live in the job's log file)
     STORED = ("id", "project", "action", "argv", "req", "cost", "lane", "status", "stage_status", "returncode", "created", "started",
-              "ended", "eta", "took", "cursor", "last_done", "frames", "mem_freed", "attempt", "retry_at", "prompt_ids", "last", "pid", "log_offset")
+              "ended", "eta", "took", "cursor", "last_done", "frames", "mem_freed", "attempt", "retry_at", "prompt_ids", "stage_prompts", "last", "pid", "log_offset")
 
     def to_data(self) -> dict:
         return {k: getattr(self, k) for k in self.STORED}
@@ -163,7 +166,7 @@ class Job:
 
     def per_stage(self):
         """Wall-clock seconds per finished stage (a preview take counts as one), model loading included, or None before the first."""
-        n = sum(v in ("done", "failed") for v in self.stage_status.values())
+        n = sum(v in ("done", "failed") for v in self.stage_status.values())  # a cancelled stage took no full render
         return round((self.last_done - self.started) / n, 1) if n and self.started and self.last_done else None
 
     def progress(self):
@@ -184,7 +187,7 @@ class Job:
             return None
         sids = list(self.stage_status)
         mean = sum(self.eta.values()) / len(self.eta)
-        finished = [x for x in sids if self.stage_status[x] in ("done", "failed")]
+        finished = [x for x in sids if self.stage_status[x] in ("done", "failed", "cancelled")]
         todo = [x for x in sids if x not in finished]
         done_t = sum(self.took.get(x, self.eta.get(x, mean)) for x in finished)
         remaining = sum(self.eta.get(x, mean) for x in todo)
@@ -221,8 +224,10 @@ class Job:
         """A stage's new status and whatever timing data it carries; `submitted` (to Comfy Cloud or the pod) is running.
         Every prompt id is kept, so a cancel can pull it off the backend's queue (queue_daemon target_of)."""
         st = {"submitted": "running"}.get(e["status"], e["status"])
-        if e.get("prompt_id") and e["prompt_id"] not in self.prompt_ids:
-            self.prompt_ids.append(e["prompt_id"])
+        if e.get("prompt_id"):
+            self.stage_prompts[sid] = e["prompt_id"]
+            if e["prompt_id"] not in self.prompt_ids:
+                self.prompt_ids.append(e["prompt_id"])
         self.stage_status[sid] = st
         if e.get("expected"):
             self.eta[sid] = int(e["expected"])
@@ -466,6 +471,42 @@ class Manager:
         return [{"project": j.project, "action": j.action, "folder": j.req.get("folder") or "", "stages": j.req["stages"], "added": j.created}
                 for j in sorted(self._held(), key=lambda j: (j.project, j.action, j.req.get("folder") or ""))]
 
+    @staticmethod
+    def target_of(job):
+        """Where the job's prompts are queued: the local ComfyUI it ran on, the pod (if it is still there), or Comfy Cloud."""
+        if job.lane == "runpod":
+            pod = runpod_pod.find()
+            return targets.get("local", server=runpod_pod.url(pod["id"])) if pod else None
+        if job.lane == "local":
+            return targets.get("local", server=job.req.get("server") or None)
+        return targets.get("cloud")
+
+    def cancel_stage(self, jid, tag):
+        """Stop one stage of a running job (tag "5", or "5.t2" for a take): the job's render loop skips it (it reads the
+        job's cancel file, jobstore.cancel_path) and its prompt comes off the backend's queue now; the other stages go on."""
+        job = self.get(jid)
+        if not job:
+            raise ApiError("no such job", 404)
+        if job.status != "running":
+            raise ApiError(f"{jid} is {job.status}: only a running job's stages can be cancelled one by one", 400)
+        if job.stage_status.get(tag) in ("done", "failed", "cancelled"):
+            raise ApiError(f"stage {tag} already {job.stage_status[tag]}", 400)
+        with open(jobstore.cancel_path(jid), "a") as f:
+            f.write(f"stage_{tag}\n")
+        jobstore.append_log(jid, f"stage {tag}: cancel requested")
+        pid = job.stage_prompts.get(tag)
+        if pid:
+            threading.Thread(target=self._drop_prompt, args=(job, pid), daemon=True).start()
+        return {"ok": True}
+
+    def _drop_prompt(self, job, pid):
+        try:
+            target = self.target_of(job)
+            if target:
+                target.cancel([pid])
+        except Exception as e:  # noqa: BLE001  # the render loop still skips the stage
+            jobstore.append_log(job.id, f"could not pull its prompt off the queue: {e}")
+
     def cancel(self, jid):
         """A failed job waiting for its auto-retry: stop that; queued: cancelled at once; running: the daemon kills it and
         clears what it queued on the backend."""
@@ -495,11 +536,12 @@ class Manager:
         req = dict(job.req)
         stages = [int(s) for s in req.get("stages") or ()]
         if stages and job.action != "edit":  # an edit's stages pick the clips of one cut: always all of them
-            done = {k.split(".")[0] for k, v in job.stage_status.items() if v == "done"}
-            failed = {k.split(".")[0] for k, v in job.stage_status.items() if v != "done"}
+            done = {k.split(".")[0] for k, v in job.stage_status.items() if v in ("done", "cancelled")}  # cancelled: on purpose
+            failed = {k.split(".")[0] for k, v in job.stage_status.items() if v == "failed"}
             left = [s for s in stages if str(s) in failed or str(s) not in done]
-            if left:
-                req["stages"] = left
+            if not left:
+                raise ApiError(f"{jid}: every stage finished or was cancelled; nothing to retry", 400)
+            req["stages"] = left
         return self.submit(job.project, job.action, req)
 
     @staticmethod
