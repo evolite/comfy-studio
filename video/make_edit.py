@@ -260,16 +260,27 @@ def _pick_sources(clips, pngs, root_pngs, order, as_still, stills) -> tuple:
     return {n: files.get(n) for n in ids}, ids
 
 
+CUT_FOLDER = "cut"  # video/cut_clip.FOLDER
+
+
+def project_root(pipeline_dir) -> Path:
+    """The project a folder belongs to: pipeline_dir itself when it holds project.json, else its parent (interp/, hires/, ...)."""
+    pipeline_dir = Path(pipeline_dir)
+    return pipeline_dir if (pipeline_dir / "project.json").exists() else pipeline_dir.parent
+
+
 def stage_sources(pipeline_dir, stills=False, order=None, as_still=(), stills_dir=None):
     """videos/stage_N.mp4 clips in stage-number order, or stage_N.png stills if the
     run has no clips (or stills=True). Only stage_<int> names count, so extras
     like stage_21a_facial_before.png are ignored. --order overrides the sequence
     (repeats/drops allowed) without renaming files. as_still mixes the two: those
-    stages use stills_dir/stage_N.png (default pipeline_dir), every other one its clip."""
+    stages use stills_dir/stage_N.png (default pipeline_dir), every other one its clip.
+    A stage trimmed in the board's Cut phase (<project>/cut/videos/stage_N.mp4) plays its cut instead of the folder's clip."""
     def found(folder, ext):
         return {int(p.stem[6:]): p for p in folder.glob(f"stage_*.{ext}") if p.stem[6:].isdigit()}
 
     clips, pngs = found(pipeline_dir / "videos", "mp4"), found(Path(stills_dir or pipeline_dir), "png")
+    clips |= found(project_root(pipeline_dir) / CUT_FOLDER / "videos", "mp4")  # a stage's cut (the board's Cut phase) replaces its clip
     pick, ids = _pick_sources(clips, pngs, found(pipeline_dir, "png"), order, as_still, stills)
     missing = [n for n in ids if pick[n] is None]
     if missing:

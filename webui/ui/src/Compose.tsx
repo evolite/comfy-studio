@@ -34,6 +34,8 @@ function loadSeenEdits(project: string): SeenEdits {
   return fresh;
 }
 
+const CUT = "cut", INTERP = "interp";  // clips: a stage's cut (the Board's Cut phase) replaces its clip; interp/ (RIFE, 48 fps) is the clip source when it exists
+
 /** The folder picked when the current one can't be cut. Mix: the one with the most approved clips (interp/ over a stray approved clip elsewhere). */
 function bestFolder(mode: Mode, eligible: string[], progress: (f: string) => Progress): string {
   // the folder with the most approved; among equals finish, then hires
@@ -225,11 +227,14 @@ function SourceCard({ p, mode, folder, sfolder, eligible, stillFolders, progress
             {([["animate", "Clips"], ["stills", "Stills"], ["mix", "Clips + stills"]] as const).map(([m, l]) => <button key={m} className={mode === m ? "on" : ""} onClick={() => onMode(m)}>{l}</button>)}
           </div>
         </div>
-        <label className="field"><span>{mode === "mix" ? "clips from" : "folder"}</span>
-          <select value={folder} onChange={(e) => onFolder(e.target.value)}>
-            {Object.keys(p.folders).map((f) => <option key={f} value={f} disabled={!eligible.includes(f)}>{folderOption(f, progress(f), mode, eligible.includes(f))}</option>)}
-          </select>
-        </label>
+        {mode !== "stills" && folder === INTERP
+          ? <div className="field" title="every stage plays its interpolated clip, or its cut when it was trimmed in the Board's Cut phase"><span>clips</span>
+              <span className="dim">{INTERP}/ ({progress(INTERP).done} approved), a stage's cut where it has one</span></div>
+          : <label className="field"><span>{mode === "mix" ? "clips from" : "folder"}</span>
+              <select value={folder} onChange={(e) => onFolder(e.target.value)}>
+                {Object.keys(p.folders).filter((f) => mode === "stills" || f !== CUT).map((f) => <option key={f} value={f} disabled={!eligible.includes(f)}>{folderOption(f, progress(f), mode, eligible.includes(f))}</option>)}
+              </select>
+            </label>}
         {mode === "mix" && <label className="field" title="the folder the stages shown as stills come from"><span>stills from</span>
           <select value={sfolder} onChange={(e) => onStillsFrom(e.target.value)}>
             {stillFolders.map((f) => <option key={f} value={f}>{f || "root"}</option>)}
@@ -522,11 +527,18 @@ export default function Compose({ name }: { readonly name: string }) {
   const fnames = Object.keys(p?.folders ?? {});
   // a folder can be cut once something in it is approved: its stills (✓ in the Board's Upscale phase) or, when cutting clips, its clips
   // (✓ in Animate); the timeline then holds only the approved ones
-  const progress = (f: string) => { const st = p?.config.stages ?? []; const key = mode === "stills" ? f : clipKey(f); return { done: st.filter((s) => doneIn(s, key)).length, total: st.length }; };
-  // mix: any folder with an approved clip; each stage is then checked on its own (its clip here, or its still in the stills folder)
-  const eligible = fnames.filter((f) => progress(f).done > 0);
-  if (eligible.length && !eligible.includes(folder)) setFolder(bestFolder(mode, eligible, progress));
-  const fs = p?.folders[folder];
+  const cutClips = p?.folders[CUT]?.clips ?? {};
+  const clipFolderOf = (base: string) => (id: number) => (cutClips[id] ? CUT : base);
+  const keyIn = (f: string) => (id: number) => (mode === "stills" ? f : clipKey(clipFolderOf(f)(id)));
+  const progress = (f: string) => { const st = p?.config.stages ?? []; const key = keyIn(f); return { done: st.filter((s) => doneIn(s, key(s.id))).length, total: st.length }; };
+  // mix: any folder with an approved clip; each stage is then checked on its own (its clip here, or its still in the stills folder).
+  // Clips aren't picked from cut/ on its own: every stage plays interp/'s clip (another folder's when there is no interp/), or its cut
+  const eligible = fnames.filter((f) => (mode === "stills" || f !== CUT) && progress(f).done > 0);
+  const want = mode !== "stills" && eligible.includes(INTERP) ? INTERP : folder;
+  if (eligible.length && (want !== folder || !eligible.includes(folder))) setFolder(eligible.includes(want) ? want : bestFolder(mode, eligible, progress));
+  const clipFolder = clipFolderOf(folder);
+  const fs0 = p?.folders[folder];
+  const fs = mode === "stills" || !fs0 ? fs0 : { ...fs0, clips: { ...fs0.clips, ...cutClips } };
   const stillFolders = fnames.filter((f) => Object.keys(p?.folders[f]?.stills ?? {}).length > 0);
   const sfolder = mode === "mix" ? stillsFolder(p, stillsFrom, folder, stillFolders) : folder;
   const sfs = p?.folders[sfolder];
@@ -534,7 +546,7 @@ export default function Compose({ name }: { readonly name: string }) {
   const collageStills = Object.keys(p?.folders[cfolder]?.stills ?? {}).map(Number).sort((a, b) => a - b);
   const pol: Polaroid = { ...polSaved, collage: polSaved.picked ?? autoCollage(p, cfolder, collageStills) };
   const stageIds = (p?.config.stages ?? []).map((s) => s.id).join(",");
-  const approvedIds = (p?.config.stages ?? []).filter((s) => doneIn(s, mode === "stills" ? folder : clipKey(folder))).map((s) => s.id).join(",");
+  const approvedIds = (p?.config.stages ?? []).filter((s) => doneIn(s, keyIn(folder)(s.id))).map((s) => s.id).join(",");
   const avail = useMemo(() => availableStages(mode, fs, sfs, stageIds, approvedIds), [JSON.stringify(fs), JSON.stringify(sfs), mode, stageIds, approvedIds]);  // eslint-disable-line react-hooks/exhaustive-deps
   const { items, commit, resetStrip } = useStrip(`compose:${name}:${folder}:${mode}`, avail, (seq) => {
     const all = stageIds.split(",").map(Number), next = mergeOrder(all, seq);
@@ -556,9 +568,9 @@ export default function Compose({ name }: { readonly name: string }) {
   const { editJob, otherJob, editing, last, elapsed } = useEditJob(jobs, name, synced);
   if (!p) return <div className="page">loading…</div>;
   const isClip = (id: number) => kindOf(id, mode, kinds, !!fs?.clips?.[id], !!sfs?.stills?.[id]) === "clip";
-  const thumb = (id: number) => isClip(id) ? fileUrl(name, folder, "clip", id, fs?.clips?.[id] ?? 0) : fileUrl(name, sfolder, "still", id, sfs?.stills?.[id] ?? 0);
+  const thumb = (id: number) => isClip(id) ? fileUrl(name, clipFolder(id), "clip", id, fs?.clips?.[id] ?? 0) : fileUrl(name, sfolder, "still", id, sfs?.stills?.[id] ?? 0);
   // mix: every chip needs its own approval (✓ on the Board) for the kind it is cut as
-  const unapproved = mode === "mix" ? unapprovedStages(p, items, (id) => (isClip(id) ? clipKey(folder) : sfolder)) : [];
+  const unapproved = mode === "mix" ? unapprovedStages(p, items, (id) => (isClip(id) ? clipKey(clipFolder(id)) : sfolder)) : [];
   const setO = (k: string) => (e: { target: { value: string } }) => setOpts({ ...opts, [k]: e.target.value });
   const num = (k: string, label: string, ph: string) => (
     <label className="field"><span>{label}</span><input type="number" step="any" placeholder={ph} value={opts[k] ?? ""} onChange={setO(k)} /></label>
@@ -568,7 +580,7 @@ export default function Compose({ name }: { readonly name: string }) {
     const a = [...items]; const [m] = a.splice(drag, 1); a.splice(to, 0, m); commit(a, true); setDrag(null);
   };
   const firstVoiced = items.find((i) => isClip(i.id) && !muted.includes(i.id) && fs?.clips?.[i.id]);
-  const voiceClip = firstVoiced && { url: fileUrl(name, folder, "clip", firstVoiced.id, fs!.clips[firstVoiced.id]), trim: 0 };
+  const voiceClip = firstVoiced && { url: fileUrl(name, clipFolder(firstVoiced.id), "clip", firstVoiced.id, fs!.clips[firstVoiced.id]), trim: 0 };
   const render = () => {
     run.mutate(editRequest({ folder, mode, items, isClip, sfolder, zoom, musicOn, beatSync, muted, music, opts, pol, cfolder }), {
       onSuccess: () => { const t = setInterval(() => qc.invalidateQueries({ queryKey: ["project", name] }), 3000); setTimeout(() => clearInterval(t), 600000); },
