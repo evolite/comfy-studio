@@ -81,10 +81,8 @@ seeds and settings used.
 
 No N = every stage missing that output; with N = redo those (the old file moves to `_debug/`). The web UI board has one phase
 per step. `status` prints a per-stage summary; `show [N..]` prints everything about those stages as JSON (what an agent reads
-for a web-UI ref `@<project>#<id>`). `view N [--map]` places stage N's `shot` (camera, subject, hidden props) in the
-project's `space.json` (its places, written once) with [spacegraph](https://github.com/evolite/spacegraph) and prints what
-is in frame, where, which frame side the subject's right side is on, what mirrors show and what is out of frame: the facts a
-`krea_scene` background is written from.
+for a web-UI ref `@<project>#<id>`). `view N` (spacegraph: stage `shot`s and `space.json`) is retired: agents
+don't write shots or space.json and don't run it; backgrounds are written straight into `krea_scene` (the `stage` skill).
 
 ## Animate + edit
 - **i2v model** = `video_engine` (project, a stage may override): `minimax` (MiniMax H3, default) or `ltx` (LTX 2.3 /
