@@ -350,7 +350,6 @@ def test_animate_batch_spans_projects(monkeypatch):
 
 
 def test_animate_batch_endpoints(monkeypatch):
-    import app as appmod
     _batch_project("20261010_batchhttp")
     monkeypatch.setattr(config, "animate_target", lambda: "runpod")
     monkeypatch.setattr(config, "animate_batch_size", lambda: 2)
