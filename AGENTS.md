@@ -11,7 +11,8 @@ usage details live in `project.py --help` and each script's docstring. Personal 
 - **Nothing personal in tracked files.** Libraries, model choices, prompt guides, stage sets, audio and output live in `data/`
   (git-ignored, `STUDIO_DATA_DIR`); the repo ships neutral starters in `defaults/` and a skeleton in `data.example/`.
 - Paths, URLs and machine settings live in `config.py` (env / `.env` overrides; key `COMFY_CLOUD_KEY`) — never hardcode them.
-- Don't restart `comfy-studio` or the local ComfyUI while jobs run (check the web UI's `/api/jobs` / ComfyUI `/queue` first).
+- Jobs run in the `comfy-queue` daemon (`webui/server/queue_daemon.py`, store `data/jobs.db` + `data/logs/jobs/`), so restarting
+  `comfy-studio` (or `comfy-queue`, which reattaches) leaves them running. Don't restart the local ComfyUI while jobs run (`/api/jobs` first).
 
 ## Layout (run from the repo root)
 ```
@@ -24,6 +25,7 @@ video/         animate_pipeline.py (i2v), interpolate.py (RIFE), make_edit.py (e
 runpod/        the RunPod animate pod's volume (seed.py fills it from the manifest), preflight (check.py), start command
                (watchdog.sh); lifecycle in pipeline/runpod_pod.py
 webui/         web UI + API (FastAPI + React, `webui/ui`, `npm run build`), service `comfy-studio` on :8191 (127.0.0.1, no auth)
+               jobs run in service `comfy-queue` (`webui/server/queue_daemon.py`; `jobs.py` submits, `jobstore.py` stores)
 dashboard.py   status page for local ComfyUI + cloud (:8190)
 restart_comfyui.py  nightly idle restart of the local ComfyUI (skips while jobs run)
 defaults/      neutral starter libraries: loras.json, voices.json, models.json, local_models.json, runpod_models.json

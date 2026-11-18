@@ -1,0 +1,15 @@
+[Unit]
+Description=Comfy Studio job queue (webui/server/queue_daemon.py): runs the jobs the web UI submits
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/comfy-studio
+ExecStart=%h/comfy-studio/webui/.venv/bin/python webui/server/queue_daemon.py
+Restart=always
+RestartSec=3
+# the jobs run in their own sessions and outlive the daemon: a restart reattaches to them (only the daemon is stopped)
+KillMode=process
+
+[Install]
+WantedBy=default.target

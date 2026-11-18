@@ -33,11 +33,6 @@ LOCAL_SERVER = config.LOCAL_COMFY_URL
 app = FastAPI(title="Comfy Studio")
 
 
-@app.on_event("startup")
-def recover_cloud_clips():
-    manager.recover_orphans()
-
-
 @app.exception_handler(P.ApiError)
 async def api_error(_, e: P.ApiError):
     return JSONResponse({"error": str(e)}, status_code=e.status)
@@ -197,7 +192,7 @@ def _local_post(path, body):
 @app.post("/api/local/cancel_all")
 def local_cancel_all():
     """Stop every local-lane job (running and waiting), then empty the local ComfyUI queue and interrupt what it is running."""
-    jobs = [j for j in manager.jobs.values() if j.lane == "local" and j.status in ("queued", "running")]
+    jobs = manager.active(lane="local")
     for j in jobs:
         manager.cancel(j.id)
     cleared = False
@@ -213,7 +208,7 @@ def local_cancel_all():
 @app.post("/api/local/restart")
 def local_restart():
     """Restart the local ComfyUI user service (it crashes under VRAM pressure); local jobs in flight are cancelled first."""
-    for j in [j for j in manager.jobs.values() if j.lane == "local" and j.status in ("queued", "running")]:
+    for j in manager.active(lane="local"):
         manager.cancel(j.id)
     r = subprocess.run(["systemctl", "--user", "restart", config.COMFYUI_SERVICE], capture_output=True, text=True, timeout=60)
     if r.returncode:
@@ -224,7 +219,7 @@ def local_restart():
 @app.post("/api/cloud/cancel_all")
 def cloud_cancel_all():
     """Stop every cloud-lane job (running and waiting); cancel also pulls what each already submitted off the Comfy Cloud queue."""
-    jobs = [j for j in manager.jobs.values() if j.lane == "cloud" and j.status in ("queued", "running")]
+    jobs = manager.active(lane="cloud")
     for j in jobs:
         manager.cancel(j.id)
     return {"jobs": len(jobs)}
@@ -258,7 +253,7 @@ def runpod_balance(refresh: bool = False):
 @app.post("/api/runpod/stop")
 def runpod_stop():
     """Stop pod now: cancel the runpod-lane jobs (running and waiting), then terminate the pod (the volume stays)."""
-    jobs = [j for j in manager.jobs.values() if j.lane == "runpod" and j.status in ("queued", "running")]
+    jobs = manager.active(lane="runpod")
     for j in jobs:
         manager.cancel(j.id)
     try:
@@ -303,7 +298,7 @@ def project_remix(name: str, body: dict = Body(...)):
 def project_delete(name: str):
     """Permanently delete the project folder; refused while a job for it is queued/running."""
     P.project_dir(name)
-    if any(j.project == name and j.status in ("queued", "running") for j in manager.jobs.values()):
+    if manager.active(project=name):
         raise P.ApiError("a job is still queued/running for this project", 409)
     shutil.rmtree(P.PIPELINES / name)
     return {"ok": True}
@@ -524,7 +519,7 @@ def cleanup_size(name: str):
 @app.post("/api/projects/{name}/cleanup")
 def cleanup(name: str):
     """Delete every earlier version, the preview takes but the current one and the edits' build folders (pipeline/history.py)."""
-    if any(j.project == name and j.status in ("queued", "running") for j in manager.jobs.values()):
+    if manager.active(project=name):
         raise P.ApiError("a job is running on this project -- clean up when it is done", 409)
     return P.hist.cleanup(P.project_dir(name))
 
@@ -643,7 +638,7 @@ def jobs_list():
 @app.get("/api/notify")
 def notify_get():
     """The 🔔: armed = a Pushover message goes out every time the queue empties (no job left queued or running)."""
-    return {"armed": manager.notify_armed_at is not None, "configured": all(config.pushover())}
+    return {"armed": manager.notify_armed(), "configured": all(config.pushover())}
 
 
 @app.post("/api/notify")
@@ -740,7 +735,7 @@ def app_settings_test_push():
 
 @app.get("/api/jobs/{jid}")
 def job_get(jid: str):
-    j = manager.jobs.get(jid)
+    j = manager.get(jid)
     if not j:
         raise P.ApiError("no such job", 404)
     return j.info(with_lines=True)
@@ -760,17 +755,18 @@ def job_retry(jid: str):
 @app.get("/api/jobs/{jid}/events")
 async def job_events(jid: str, request: Request):
     """SSE: `data: {"i": n, "line": ...}` per log line, then `event: end`. Replays from the start."""
-    j = manager.jobs.get(jid)
-    if not j:
+    if not manager.get(jid):
         raise P.ApiError("no such job", 404)
 
-    async def gen():
-        i = 0
+    async def gen():  # the job runs in the queue daemon: follow its log file and its stored state
+        i, offset = 0, 0
         while True:
-            while i < len(j.lines):
-                yield f"data: {json.dumps({'i': i, 'line': j.lines[i], 'stages': j.stage_status, 'status': j.status})}\n\n"
+            j = manager.get(jid)
+            lines, offset = jobs.jobstore.read_log(jid, offset)
+            for line in lines:
+                yield f"data: {json.dumps({'i': i, 'line': line, 'stages': j.stage_status, 'status': j.status})}\n\n"
                 i += 1
-            if j.status in ("done", "failed", "cancelled") and i >= len(j.lines):
+            if j.status in ("done", "failed", "cancelled") and not lines:
                 yield f"event: end\ndata: {json.dumps(j.info())}\n\n"
                 return
             if await request.is_disconnected():

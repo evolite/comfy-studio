@@ -1,4 +1,7 @@
-"""Job manager: runs `project.py` as a subprocess, streams its stdout, parses per-stage progress.
+"""Jobs: what the web server submits, cancels and reads. The jobs themselves run in the queue daemon (queue_daemon.py, the
+comfy-queue user service), which starts each one's `project.py` as its own process and parses its output into per-stage
+progress; both sides share the durable store (jobstore.py), so restarting the web server (or the daemon) leaves running
+jobs alone.
 
 Lanes: `cloud` (paid cloud jobs), `local` (local ComfyUI jobs) and `runpod` (animate on our RunPod pod, when that is the ⚙
 animate target) each run one job at a time (concurrent i2v submissions break the backend; one GPU locally and on the pod);
@@ -8,27 +11,20 @@ A failed job in a lane (not `free`: its failures don't fix themselves) is submit
 RETRY_TIMES times in a row (overnight: a RunPod GPU that isn't free, a cloud timeout); cancelling the failed job stops it.
 """
 import json
-import os
 import re
-import shutil
-import signal
-import subprocess
 import sys
 import threading
 import time
-import urllib.error
 import urllib.parse
 import urllib.request
-from collections import deque
 from pathlib import Path
 
-import config
+import jobstore  # first: it puts the repo root (config.py) on sys.path
+import config  # noqa: E402
 from projects import PREVIEW_GATED, ROOT, ApiError, load, preview_approved, project_dir
 import voice_registry  # noqa: E402  # pipeline/, on sys.path via projects
 
 sys.path.insert(0, str(ROOT / "pipeline"))
-import comfy_api  # noqa: E402  # cloud base URL + key; cancel needs to reach the Comfy queue
-import runpod_pod  # noqa: E402
 import steps  # noqa: E402
 
 # every finished edit is copied to config.PUBLISH_DIR when set (overwriting the previous one of the same project + source folder
@@ -109,6 +105,8 @@ EDIT_FLAGS = {"audio": "--audio", "beat_times_file": "--beat-times-file", "start
               "card_sound_volume": "--card-sound-volume"}
 
 
+
+
 class Job:
     def __init__(self, jid, project, action, argv, req):
         self.id, self.project, self.action, self.argv, self.req = jid, project, action, argv, req
@@ -127,9 +125,33 @@ class Job:
         self.frames = None  # edit jobs: frame count of the plan, once make_edit has printed it
         self.mem_freed = None  # why the local batch had to free memory first (memory check), else None
         self.attempt = 1  # auto-retries count up from the job they retry
-        self.retry_at, self.retry_timer = None, None  # when this failed job is submitted again (None: it won't be)
+        self.retry_at = None  # when this failed job is submitted again (None: it won't be)
         self.cloud_ids = []  # prompt ids this job submitted (Comfy Cloud, or the pod), so cancel can pull them off the remote queue
-        self.cond = threading.Condition()
+        self.last = ""  # the latest log line (the jobs panel's one-line status)
+        self.pid = None  # the daemon's wrapper process (its process group = the job), so another daemon can reattach or kill it
+        self.cancel_requested = False
+        self.log_offset = 0  # bytes of the log the daemon has parsed (a reattaching daemon reads on from here)
+
+    # the state that goes into jobstore (everything but the log lines, which live in the job's log file)
+    STORED = ("id", "project", "action", "argv", "req", "cost", "lane", "status", "stage_status", "returncode", "created", "started",
+              "ended", "eta", "took", "cursor", "last_done", "frames", "mem_freed", "attempt", "retry_at", "cloud_ids", "last", "pid", "log_offset")
+
+    def to_data(self) -> dict:
+        return {k: getattr(self, k) for k in self.STORED}
+
+    @classmethod
+    def from_data(cls, d: dict) -> "Job":
+        j = cls.__new__(cls)
+        j.lines, j.proc = [], None
+        j.last, j.pid, j.cloud_ids, j.attempt, j.retry_at, j.mem_freed, j.frames, j.log_offset = "", None, [], 1, None, None, None, 0
+        for k in cls.STORED:
+            if k in d:
+                setattr(j, k, d[k])
+        j.cancel_requested = bool(d.get("cancel"))
+        return j
+
+    def log_lines(self) -> list:
+        return self.lines or jobstore.read_log(self.id)[0]
 
     def key(self):
         r = self.req
@@ -140,10 +162,10 @@ class Job:
         d = {"id": self.id, "project": self.project, "action": self.action, "cost": self.cost, "lane": self.lane,
              "status": self.status, "returncode": self.returncode, "stages": self.stage_status, "req": self.req,
              "created": self.created, "started": self.started, "ended": self.ended, "argv": " ".join(self.argv[2:]),
-             "last": self.lines[-1] if self.lines else "", "progress": self.progress(), "per_stage": self.per_stage(), "took": self.took, "mem_freed": self.mem_freed,
+             "last": self.lines[-1] if self.lines else self.last, "progress": self.progress(), "per_stage": self.per_stage(), "took": self.took, "mem_freed": self.mem_freed,
              "attempt": self.attempt, "retry_at": self.retry_at}
         if with_lines:
-            d["lines"] = self.lines
+            d["lines"] = self.log_lines()
         return d
 
     def per_stage(self):
@@ -183,20 +205,20 @@ class Job:
         return {"fraction": min((done_t + elapsed) / total, 1) if total else 1, "left": max(remaining - elapsed, 0), "exact": exact}
 
     def emit(self, line):
-        with self.cond:
-            self.lines.append(line)
-            if self.action == "edit":
-                f = FRAMES_RE.search(line)
-                if f:
-                    self.frames = int(f.group(1))
-            f = MEMFREE_RE.search(line)
+        """One log line (the daemon calls it for each line it reads from the job's log), parsed into the job's state."""
+        self.lines.append(line)
+        self.last = line
+        if self.action == "edit":
+            f = FRAMES_RE.search(line)
             if f:
-                self.mem_freed = f.group(1)
-            c = CLOUD_ID_RE.search(line)
-            if c:
-                self.cloud_ids.append(c.group(1))
-            self._stage_line(line)
-            self.cond.notify_all()
+                self.frames = int(f.group(1))
+        f = MEMFREE_RE.search(line)
+        if f:
+            self.mem_freed = f.group(1)
+        c = CLOUD_ID_RE.search(line)
+        if c:
+            self.cloud_ids.append(c.group(1))
+        self._stage_line(line)
 
     def _stage_line(self, line):
         """A `[stage_N] ...` line: its new status and whatever timing data it carries."""
@@ -225,39 +247,36 @@ class Job:
             self.cursor = self.last_done = time.time()
 
 
+
 class Manager:
+    """The web server's side: submits (validated argv into jobstore), cancels, retries and reads jobs; the "Start batch" queue."""
+
     def __init__(self):
-        self.jobs = {}
-        self.order = deque(maxlen=200)
         self.lock = threading.Lock()
-        self.seq = 0
-        self.lane_locks = {"cloud": threading.Lock(), "local": threading.Lock(), "runpod": threading.Lock()}
-        self.notify_armed_at = None  # the 🔔: on since this time, pushes each time the queue empties until turned off
-        self.notify_reported = set()  # ids of the jobs the 🔔 already pushed about
         self.animate_batch = {}  # (project, action, folder) -> {"stages": [ids], "added": ts}: armed "Start batch" clicks, sent as one job
 
+    @staticmethod
+    def get(jid):
+        d = jobstore.get(jid)
+        return Job.from_data(d) if d else None
+
+    @staticmethod
+    def active(lane=None, project=None) -> list:
+        return [j for j in map(Job.from_data, jobstore.by_status(*jobstore.ACTIVE))
+                if (lane is None or j.lane == lane) and (project is None or j.project == project)]
+
     def busy(self):
-        return any(j.status in ("queued", "running") for j in self.jobs.values())
+        return bool(self.active())
 
-    def arm_notify(self, on):
-        self.notify_armed_at = time.time() if on else None
-        self.notify_reported = set()
-        self._maybe_notify()
+    @staticmethod
+    def notify_armed():
+        return jobstore.setting("notify_armed_at") is not None
 
-    def _maybe_notify(self):
-        with self.lock:
-            since = self.notify_armed_at
-            if since is None or self.busy():
-                return
-            ended = [j for j in self.jobs.values()  # a cancelled job gets `ended` later, so it must not push a second time then
-                     if (j.ended or time.time()) >= since and j.id not in self.notify_reported]
-            if not ended:
-                return  # idle with nothing new since the last push: wait for the next jobs
-            self.notify_reported.update(j.id for j in ended)
-        counts = {st: sum(j.status == st for j in ended) for st in ("done", "failed", "cancelled")}
-        msg = "Queue empty" + (" — " + ", ".join(f"{n} {st}" for st, n in counts.items() if n) if ended else "")
-        msg += "".join(f"\n✗ {j.id} {j.action}" for j in ended if j.status == "failed")  # never the project name: pushes show on the lock screen
-        threading.Thread(target=send_pushover, args=("Comfy Studio", msg), daemon=True).start()
+    @staticmethod
+    def arm_notify(on):
+        """The 🔔: from now on the daemon pushes each time the queue empties (until turned off)."""
+        jobstore.set_setting("notify_armed_at", time.time() if on else None)
+        jobstore.set_setting("notify_reported", [])
 
     def build_argv(self, project, action, req):
         if action not in ACTIONS:
@@ -407,16 +426,12 @@ class Manager:
 
     def submit(self, project, action, req):
         argv = self.build_argv(project, action, req)
-        with self.lock:
-            self.seq += 1
-            job = Job(f"j{self.seq}", project, action, argv, req)
-            for j in self.jobs.values():
-                if j.status in ("queued", "running") and j.key() == job.key():
+        job = Job("", project, action, argv, req)
+        with self.lock:  # one submitter per process; the store's insert is atomic across processes
+            for j in self.active():
+                if j.key() == job.key():
                     raise ApiError(f"{action} already {j.status} as {j.id}", 409)
-            self.jobs[job.id] = job
-            self.order.append(job.id)
-        threading.Thread(target=self._run, args=(job,), daemon=True).start()
-        return job
+            return Job.from_data(jobstore.insert(job.to_data()))
 
     def _submit_batch(self, key, stages):
         """Submit one merged animate job for a batch (call outside self.lock: submit takes it). A duplicate of a
@@ -427,13 +442,11 @@ class Manager:
         except ApiError as e:
             if e.status != 409:
                 raise
-            with self.lock:
-                for j in self.jobs.values():
-                    job_folder = j.req.get("folder") or ""
-                    same = j.project == project and j.action == action and job_folder == folder
-                    same = same and sorted(map(int, j.req.get("stages") or ())) == sorted(stages)
-                    if j.status in ("queued", "running") and same:
-                        return j.info()
+            for j in self.active(project=project):
+                job_folder = j.req.get("folder") or ""
+                same = j.action == action and job_folder == folder and sorted(map(int, j.req.get("stages") or ())) == sorted(stages)
+                if same:
+                    return j.info()
             raise
 
     def add_to_batch(self, project, action, req):
@@ -485,110 +498,32 @@ class Manager:
             return [{"project": p, "action": a, "folder": f, "stages": e["stages"], "added": e["added"]}
                     for (p, a, f), e in sorted(self.animate_batch.items())]
 
-    def _run(self, job):
-        lock = self.lane_locks.get(job.lane)
-        if lock:
-            lock.acquire()
-        try:
-            if job.status == "cancelled":
-                return
-            job.status, job.started = "running", time.time()
-            job.emit("$ " + " ".join(job.argv[1:]))
-            job.proc = subprocess.Popen(job.argv, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
-                                        env={**os.environ, "PYTHONUNBUFFERED": "1"}, start_new_session=True)
-            for line in job.proc.stdout:
-                job.emit(line.rstrip("\n"))
-            job.returncode = job.proc.wait()
-            if job.status != "cancelled":
-                job.status = "done" if job.returncode == 0 else "failed"
-            if job.status == "done" and job.action == "edit":
-                save_edit_timing(edit_kind(job.req), time.time() - job.started, job.frames)
-                self.publish_edit(job)
-        except Exception as e:  # noqa: BLE001
-            job.emit(f"server error: {e}")
-            job.status = "failed"
-        finally:
-            job.ended = time.time()
-            with job.cond:
-                job.cond.notify_all()
-            if lock:
-                lock.release()
-            self._schedule_retry(job)
-            self._maybe_notify()
-
-    def _schedule_retry(self, job):
-        if job.status != "failed" or job.lane not in self.lane_locks or job.attempt > RETRY_TIMES:
-            return
-        job.retry_at = time.time() + RETRY_AFTER
-        job.emit(f"auto-retry at {time.strftime('%H:%M', time.localtime(job.retry_at))} (attempt {job.attempt + 1} of {RETRY_TIMES + 1})")
-        job.retry_timer = threading.Timer(RETRY_AFTER, self._auto_retry, args=(job,))
-        job.retry_timer.daemon = True
-        job.retry_timer.start()
-
-    def _auto_retry(self, job):
-        if job.retry_at is None:
-            return  # cancelled or retried by hand meanwhile
-        try:
-            new = self.retry(job.id)
-        except ApiError as e:  # e.g. the same request already queued again by hand
-            job.emit(f"auto-retry skipped: {e}")
-            return
-        new.attempt = job.attempt + 1
-        job.emit(f"auto-retried as {new.id}")
-
-    @staticmethod
-    def publish_edit(job):
-        """Copy the edit this job rendered to config.PUBLISH_DIR (if set) as <project>_<folder>.mp4 (<project>.mp4 for the root;
-        a no-music edit adds _nomusic), replacing the previous one of the same kind."""
-        if not config.PUBLISH_DIR:
-            return
-        try:
-            folder = job.req.get("folder") or ""
-            made = project_dir(job.project) / folder / "edits" / job.argv[job.argv.index("--out-name") + 1]
-            suffix = "_nomusic" if edit_kind(job.req) == "nomusic" else ""
-            dst = config.PUBLISH_DIR / (f"{job.project}_{folder}{suffix}.mp4" if folder else f"{job.project}{suffix}.mp4")
-            tmp = dst.with_name(dst.name + ".part")
-            shutil.copyfile(made, tmp)
-            os.replace(tmp, dst)
-            job.emit(f"published -> {dst}")
-        except Exception as e:  # noqa: BLE001
-            job.emit(f"publish failed: {e}")
-
     def cancel(self, jid):
-        job = self.jobs.get(jid)
+        """A failed job waiting for its auto-retry: stop that; queued: cancelled at once; running: the daemon kills it and
+        clears what it queued on the backend."""
+        job = self.get(jid)
         if not job:
             raise ApiError("no such job", 404)
-        if job.retry_at is not None:  # a failed job waiting for its auto-retry: stop that
-            self._stop_retry(job)
-            job.emit("auto-retry cancelled")
+        if job.retry_at is not None:
+            if jobstore.take_retry(jid):
+                jobstore.append_log(jid, "auto-retry cancelled")
         elif job.status == "queued":
-            job.status = "cancelled"
-        elif job.status == "running" and job.proc:
-            job.status = "cancelled"
-            try:  # the whole group: project.py's children (animate_pipeline.py...) keep submitting and hold the lane otherwise
-                os.killpg(job.proc.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            threading.Thread(target=self._cancel_remote, args=(job,), daemon=True).start()
-        self._maybe_notify()
-        return job
-
-    @staticmethod
-    def _stop_retry(job):
-        job.retry_at = None
-        if job.retry_timer:
-            job.retry_timer.cancel()
+            if not jobstore.cancel_queued(jid):  # the daemon claimed it just now: it is running
+                jobstore.request_cancel(jid)
+        elif job.status == "running":
+            jobstore.request_cancel(jid)
+        return self.get(jid)
 
     def retry(self, jid):
         """Submit a failed/cancelled job again with the same request (argv rebuilt from today's settings). A job naming its
         stages only reruns the ones that didn't finish, so the stages it already rendered aren't paid for twice; with none
         left unfinished (or no stage list) the request goes out unchanged."""
-        job = self.jobs.get(jid)
+        job = self.get(jid)
         if not job:
             raise ApiError("no such job", 404)
         if job.status not in ("failed", "cancelled"):
             raise ApiError(f"only a failed or cancelled job can be retried ({jid} is {job.status})", 400)
-        self._stop_retry(job)  # by hand, or the auto-retry itself: once
+        jobstore.take_retry(jid)  # by hand, or the auto-retry itself: once
         req = dict(job.req)
         stages = [int(s) for s in req.get("stages") or ()]
         if stages and job.action != "edit":  # an edit's stages pick the clips of one cut: always all of them
@@ -599,103 +534,9 @@ class Manager:
                 req["stages"] = left
         return self.submit(job.project, job.action, req)
 
-    def _cancel_remote(self, job):
-        """Killing project.py leaves whatever it already submitted in Comfy's queue; remove those too."""
-        try:
-            if job.lane == "runpod":
-                n = self._cancel_pod(job)
-            else:
-                n = self._cancel_cloud(job) if job.cloud_ids else 0
-                n += self._cancel_local(job) if job.lane == "local" else 0
-            job.emit(f"cancelled: removed {n} job(s) from the ComfyUI queue" if n else "cancelled: nothing left in the ComfyUI queue")
-        except Exception as e:  # noqa: BLE001
-            job.emit(f"cancelled, but could not clear the ComfyUI queue: {e}")
-
     @staticmethod
-    def _post_json(call, path, body):
-        return call(path, json.dumps(body).encode(), {"Content-Type": "application/json"}, "POST")
-
-    def _cancel_cloud(self, job):
-        if not config.cloud_key_present():
-            return 0  # without a key the cloud queue is unreachable, and _request exits on that
-        try:
-            running = json.dumps(json.loads(comfy_api._request("/api/queue")).get("queue_running"))
-        # _request exits on a 402 (the account can't pay): the cancel goes on without the cloud queue
-        except (urllib.error.URLError, ValueError, SystemExit):  # NOSONAR(S5754)
-            running = ""
-        n = 0
-        for pid in job.cloud_ids:
-            try:
-                if pid in running:
-                    self._post_json(comfy_api._request, "/api/interrupt", {"prompt_id": pid})
-                self._post_json(comfy_api._request, "/api/queue", {"delete": [pid]})
-                n += 1
-            except (urllib.error.URLError, SystemExit):  # NOSONAR(S5754) already finished / not found, or a 402 exit
-                pass
-        return n
-
-    QUEUE_PATH = "/queue"
-
-    @staticmethod
-    def _caller(server):
-        def call(path, data=None, headers=None, method="GET"):
-            req = urllib.request.Request(server + path, data=data, headers=headers or {}, method=method)
-            with urllib.request.urlopen(req, timeout=10) as r:
-                return r.read()
-        return call
-
-    def _cancel_pod(self, job):
-        """The prompts this job queued on the pod: deleted, the running one interrupted (the pod stays up; its watchdog ends it)."""
-        pod = runpod_pod.find()
-        if not pod or not job.cloud_ids:
-            return 0
-        call = self._caller(runpod_pod.url(pod["id"]))
-        try:
-            running = json.dumps(json.loads(call(self.QUEUE_PATH)).get("queue_running"))
-        except (urllib.error.URLError, ValueError):
-            return 0
-        for pid in job.cloud_ids:
-            if pid in running:
-                self._post_json(call, "/interrupt", {"prompt_id": pid})
-        self._post_json(call, self.QUEUE_PATH, {"delete": job.cloud_ids})
-        return len(job.cloud_ids)
-
-    def _cancel_local(self, job):
-        server = (job.req.get("server") or LOCAL_DEFAULT).rstrip("/")
-        call = self._caller(server)
-        wanted = {str(s) for s in job.req.get("stages") or []}
-
-        def mine(item):  # LocalTarget.submit labels each prompt "<project> stage N[ ...]"
-            extra = item[3] if len(item) > 3 and isinstance(item[3], dict) else {}
-            label = extra.get("label", "")
-            m = re.match(rf"{re.escape(job.project)} stage (\d+)", label)
-            return bool(m) and (not wanted or m.group(1) in wanted)
-
-        try:
-            q = json.loads(call(self.QUEUE_PATH))
-        except (urllib.error.URLError, ValueError):
-            return 0  # server not up: nothing to clear
-        pending = [i[1] for i in q.get("queue_pending", []) if mine(i)]
-        if pending:
-            self._post_json(call, self.QUEUE_PATH, {"delete": pending})
-        if any(mine(i) for i in q.get("queue_running", [])):
-            call("/interrupt", b"{}", {"Content-Type": "application/json"}, "POST")
-            pending.append("running")
-        return len(pending)
-
-    def recover_orphans(self):
-        """At startup: a project with i2v_pending records (animate runs killed by the last restart) gets a `recover` job that
-        waits for those cloud renders and saves them."""
-        from projects import PIPELINES
-        for d in sorted(PIPELINES.iterdir()) if PIPELINES.is_dir() else ():
-            if (d / "project.json").exists() and any(d.glob("**/_debug/i2v_pending/stage_*.json")):
-                try:
-                    self.submit(d.name, "recover", {})
-                except ApiError:
-                    pass
-
-    def list(self):
-        return [self.jobs[i].info() for i in reversed(self.order) if i in self.jobs]
+    def list():
+        return [Job.from_data(d).info() for d in jobstore.recent()]
 
 
 manager = Manager()

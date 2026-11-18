@@ -1,6 +1,7 @@
 [Unit]
 Description=Comfy Studio web UI + API (webui/server)
 After=network.target
+Wants=comfy-queue.service
 
 [Service]
 Type=simple

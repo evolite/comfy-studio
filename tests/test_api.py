@@ -85,6 +85,13 @@ def test_remix_copies_picked_stages():
         assert c.post("/api/projects/20261001_src/remix", json=body).status_code == 400
 
 
+def _jobs():
+    """Every job in the store, oldest first."""
+    import jobstore
+    from jobs import Job
+    return [Job.from_data(d) for d in reversed(jobstore.recent())]
+
+
 def test_job_flags_a_memory_check_free():
     from jobs import Job
     j = Job("j1", "p", "preview_local", ["py", "project.py"], {})
@@ -114,15 +121,15 @@ def test_stale_clips_flag_clips_older_than_their_source():
 
 
 def test_recover_job_is_queued_for_orphaned_cloud_clips():
-    from jobs import Manager
+    from queue_daemon import Daemon
     d = config.PIPELINES_DIR / "20261001_orphan"
     (d / "hires" / "_debug" / "i2v_pending").mkdir(parents=True)
     (d / "project.json").write_text('{"engine": "full", "stages": [{"id": 1}]}')
     (d / "hires" / "_debug" / "i2v_pending" / "stage_1.json").write_text('{"prompt_id": "x", "stage": 1, "pid": 0}')
-    m = Manager()
-    m._run = lambda job: None  # don't start project.py
-    m.recover_orphans()
-    assert [(j.project, j.action, j.argv[-1]) for j in m.jobs.values()] == [("20261001_orphan", "recover", "recover")]
+    Daemon.recover_orphans()
+    assert [(j.project, j.action, j.argv[-1]) for j in _jobs()] == [("20261001_orphan", "recover", "recover")]
+    Daemon.recover_orphans()  # already queued: not twice
+    assert len(_jobs()) == 1
 
 
 def test_civitai_post_exports_still_and_clip_pairs(monkeypatch):
@@ -195,10 +202,11 @@ def test_civitai_post_can_export_stills_only(monkeypatch):
 
 def test_notify_pushes_each_time_the_queue_empties(monkeypatch):
     import time
-    import jobs
+    import jobstore
+    import queue_daemon
     from jobs import Job, Manager
     sent = []
-    monkeypatch.setattr(jobs, "send_pushover", lambda title, msg: sent.append(msg))
+    monkeypatch.setattr(queue_daemon, "send_pushover", lambda title, msg: sent.append(msg))
 
     def wait(n):
         for _ in range(100):
@@ -206,42 +214,46 @@ def test_notify_pushes_each_time_the_queue_empties(monkeypatch):
                 return
             time.sleep(0.01)
 
-    m = Manager()
-    old = Job("j0", "p", "preview_local", [], {})
-    old.status, old.ended = "done", time.time() - 60
-    m.jobs = {"j0": old}
-    m.arm_notify(True)  # idle: stays armed until something has run
+    def add(action="preview_local", status="queued", ended=None, argv=()):
+        j = Job("", "p", action, list(argv), {})
+        j.status, j.ended = status, ended
+        return jobstore.insert(j.to_data())["id"]
+
+    def set_(jid, status, ended=None):
+        d = jobstore.get(jid)
+        d["status"], d["ended"] = status, ended
+        jobstore.save(d)
+
+    notify = queue_daemon.Daemon.maybe_notify
+    add(status="done", ended=time.time() - 60)
+    Manager.arm_notify(True)  # idle: stays armed until something has run
+    notify()
     time.sleep(0.05)
-    assert sent == [] and m.notify_armed_at is not None
-    a, b = Job("j1", "p", "preview_local", [], {}), Job("j2", "q", "animate", ["py", "project.py", "animate", "--target", "cloud"], {})
-    a.status, b.status = "running", "queued"
-    m.jobs.update({"j1": a, "j2": b})
-    a.status, a.ended = "done", time.time()
-    m._maybe_notify()
+    assert sent == [] and Manager.notify_armed()
+    a = add(status="running")
+    b = add("animate", argv=["py", "project.py", "animate", "--target", "cloud"])
+    set_(a, "done", time.time())
+    notify()
     time.sleep(0.05)
-    assert sent == [] and m.notify_armed_at is not None  # j2 still queued
-    b.status, b.ended = "failed", time.time()
-    m._maybe_notify()
+    assert sent == [] and Manager.notify_armed()  # b still queued
+    set_(b, "failed", time.time())
+    notify()
     wait(1)
-    assert sent[0] == "Queue empty — 1 done, 1 failed\n✗ j2 animate" and m.notify_armed_at is not None  # job id, never the project name
-    m._maybe_notify()
+    assert sent[0] == f"Queue empty — 1 done, 1 failed\n✗ {b} animate" and Manager.notify_armed()  # job id, never the project name
+    notify()
     time.sleep(0.05)
     assert len(sent) == 1  # nothing new ran: one push per emptying
-    c = Job("j3", "p", "preview_local", [], {})
-    c.status = "cancelled"  # cancelled while queued: `ended` is set later, by its worker
-    m.jobs["j3"] = c
-    m._maybe_notify()
+    c = add()
+    jobstore.cancel_queued(c)  # cancelled while queued: it never gets `ended`
+    notify()
     wait(2)
     assert sent[1] == "Queue empty — 1 cancelled"
-    c.ended = time.time()
-    m._maybe_notify()
+    notify()
     time.sleep(0.05)
     assert len(sent) == 2  # the same job doesn't push again
-    m.arm_notify(False)
-    d = Job("j4", "p", "preview_local", [], {})
-    d.status, d.ended = "done", time.time()
-    m.jobs["j4"] = d
-    m._maybe_notify()
+    Manager.arm_notify(False)
+    add(status="done", ended=time.time())
+    notify()
     time.sleep(0.05)
     assert len(sent) == 2  # turned off
 
@@ -284,14 +296,13 @@ def test_animate_batch_accumulates_dedups_and_fires_at_size(monkeypatch):
     _batch_project()
     monkeypatch.setattr(config, "animate_batch_size", lambda: 2)
     m = Manager()
-    m._run = lambda job: None  # don't start project.py
     r1 = m.add_to_batch("20261010_batch", "animate", {"stages": [1]})
-    assert r1["job"] is None and r1["pending"] == 1 and not m.jobs
+    assert r1["job"] is None and r1["pending"] == 1 and not _jobs()
     again = m.add_to_batch("20261010_batch", "animate", {"stages": [1]})  # a repeat click doesn't double-queue
-    assert again["pending"] == 1 and not m.jobs
+    assert again["pending"] == 1 and not _jobs()
     r2 = m.add_to_batch("20261010_batch", "animate", {"stages": [2]})
-    assert r2["job"] is not None and len(m.jobs) == 1
-    job = next(iter(m.jobs.values()))
+    assert r2["job"] is not None and len(_jobs()) == 1
+    job = _jobs()[0]
     assert job.req["stages"] == [1, 2] and m.batch_state() == []
     with pytest.raises(ApiError):  # only animate actions batch
         m.add_to_batch("20261010_batch", "preview", {"stages": [1]})
@@ -304,15 +315,14 @@ def test_animate_batch_keys_flush_and_clear(monkeypatch):
     _batch_project()
     monkeypatch.setattr(config, "animate_batch_size", lambda: 5)
     m = Manager()
-    m._run = lambda job: None
     m.add_to_batch("20261010_batch", "animate", {"stages": [1], "folder": "hires"})
     m.add_to_batch("20261010_batch", "animate", {"stages": [2], "folder": ""})
     m.add_to_batch("20261010_batch", "animate_rife", {"stages": [3], "folder": "hires"})
     state = {(b["action"], b["folder"]): b["stages"] for b in m.batch_state()}
     assert state == {("animate", "hires"): [1], ("animate", ""): [2], ("animate_rife", "hires"): [3]}
     r = m.flush_batch()  # "Send now": everything fires even below the size
-    assert len(r["sent"]) == 3 and r["pending"] == [] and len(m.jobs) == 3
-    assert {(j.action, j.req.get("folder") or "") for j in m.jobs.values()} == {("animate", "hires"), ("animate", ""), ("animate_rife", "hires")}
+    assert len(r["sent"]) == 3 and r["pending"] == [] and len(_jobs()) == 3
+    assert {(j.action, j.req.get("folder") or "") for j in _jobs()} == {("animate", "hires"), ("animate", ""), ("animate_rife", "hires")}
     m.add_to_batch("20261010_batch", "animate", {"stages": [1]})
     m.clear_batch()
     assert m.batch_state() == []
@@ -326,18 +336,17 @@ def test_animate_batch_spans_projects(monkeypatch):
     _batch_project("20261010_batch_b")
     monkeypatch.setattr(config, "animate_batch_size", lambda: 3)
     m = Manager()
-    m._run = lambda job: None
     assert m.add_to_batch("20261010_batch_a", "animate", {"stages": [1, 2]})["pending"] == 2
     assert {b["project"] for b in m.batch_state()} == {"20261010_batch_a"}
     r = m.add_to_batch("20261010_batch_b", "animate", {"stages": [1]})  # the total reaches the size: both projects fire
     assert r["job"]["project"] == "20261010_batch_b" and r["pending"] == 0 and m.batch_state() == []
-    assert {j.project: j.req["stages"] for j in m.jobs.values()} == {"20261010_batch_a": [1, 2], "20261010_batch_b": [1]}
+    assert {j.project: j.req["stages"] for j in _jobs()} == {"20261010_batch_a": [1, 2], "20261010_batch_b": [1]}
     m.add_to_batch("gone_project", "animate", {"stages": [1]})
     m.add_to_batch("20261010_batch_a", "animate", {"stages": [3]})
     with pytest.raises(ApiError):  # a batch that can't be submitted stays queued, the others still go out
         m.flush_batch()
     assert [b["project"] for b in m.batch_state()] == ["gone_project"]
-    assert any(j.req["stages"] == [3] for j in m.jobs.values())
+    assert any(j.req["stages"] == [3] for j in _jobs())
 
 
 def test_animate_batch_endpoints(monkeypatch):
@@ -345,7 +354,6 @@ def test_animate_batch_endpoints(monkeypatch):
     _batch_project("20261010_batchhttp")
     monkeypatch.setattr(config, "animate_target", lambda: "runpod")
     monkeypatch.setattr(config, "animate_batch_size", lambda: 2)
-    monkeypatch.setattr(appmod.manager, "_run", lambda job: None)
     c = client()
     r = c.post("/api/projects/20261010_batchhttp/animate-batch", json={"action": "animate", "stages": [1]}).json()
     assert r["job"] is None and r["pending"] == 1
@@ -376,4 +384,4 @@ def test_animate_refused_without_motion(monkeypatch):
     m = Manager()
     with pytest.raises(ApiError, match=r"stages \[2\].*motion"):
         m.submit("20261010_batch", "animate", {"stages": [1, 2]})
-    assert not m.jobs
+    assert not _jobs()

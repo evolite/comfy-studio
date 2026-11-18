@@ -24,3 +24,11 @@ def no_sleeping(monkeypatch):
     """The local target waits a few seconds after unloading models and between polls; the fake server needs neither."""
     from targets import local
     monkeypatch.setattr(local.time, "sleep", lambda s: None)
+
+
+@pytest.fixture(autouse=True)
+def fresh_jobstore(monkeypatch, tmp_path):
+    """Every test starts with an empty job store (the queue daemon isn't running: jobs stay queued)."""
+    import jobstore
+    monkeypatch.setattr(jobstore, "DB", tmp_path / "jobs.db")
+    monkeypatch.setattr(jobstore, "LOG_DIR", tmp_path / "jobs")
