@@ -99,11 +99,13 @@ def stalled(seen: dict, prompt_id: str, state: str, limit: float = STALL_SECONDS
 
 
 def cancel(prompt_id: str) -> None:
-    """Pull a job off the cloud queue (best effort)."""
-    try:
-        _request("/api/queue", json.dumps({"delete": [prompt_id]}).encode(), {"Content-Type": "application/json"}, "POST")
-    except urllib.error.URLError:
-        pass
+    """Pull a job off the cloud queue, interrupting it if it is the one running (best effort)."""
+    for path in ("/api/interrupt", "/api/queue"):
+        body = {"prompt_id": prompt_id} if path == "/api/interrupt" else {"delete": [prompt_id]}
+        try:
+            _request(path, json.dumps(body).encode(), {"Content-Type": "application/json"}, "POST")
+        except (urllib.error.URLError, SystemExit):  # NOSONAR(S5754) not running / already finished, or a 402 exit
+            pass
 
 
 def fetch_job(prompt_id: str) -> dict:
@@ -232,6 +234,13 @@ class CloudTarget(Target):
             h["state"] = "submitted"
             pending[h["id"]] = j
         return None
+
+    def cancel(self, prompt_ids: list) -> int:
+        if not prompt_ids or not config.cloud_key_present():
+            return 0  # without a key the cloud queue is unreachable
+        for pid in prompt_ids:
+            cancel(pid)
+        return len(prompt_ids)
 
     def collect(self, jobs: list):
         """Poll every job together; yield each one as soon as it is downloaded."""

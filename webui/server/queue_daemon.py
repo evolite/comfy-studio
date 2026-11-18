@@ -11,27 +11,23 @@ a previous restart cut off.
 
     python3 webui/server/queue_daemon.py
 """
-import json
 import os
-import re
 import shutil
 import signal
 import subprocess
 import sys
 import threading
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # repo root: config.py
 import config  # noqa: E402
 import jobstore  # noqa: E402
-from jobs import LOCAL_DEFAULT, RETRY_AFTER, RETRY_TIMES, Job, edit_kind, manager, save_edit_timing, send_pushover  # noqa: E402
+from jobs import RETRY_AFTER, RETRY_TIMES, Job, edit_kind, manager, save_edit_timing, send_pushover  # noqa: E402
 from projects import ROOT, ApiError, project_dir  # noqa: E402
-import comfy_api  # noqa: E402  # pipeline/, on sys.path via jobs: cloud base URL + key, to clear the Comfy queue on cancel
-import runpod_pod  # noqa: E402
+import runpod_pod  # noqa: E402  # pipeline/, on sys.path via jobs
+import targets  # noqa: E402
 
 TICK = 0.5          # seconds between looks at the store (new jobs, cancels, due retries)
 SAVE_EVERY = 0.5    # a running job's state is stored at most this often (and always when it ends)
@@ -243,89 +239,23 @@ class Daemon:
             jobstore.append_log(job.id, f"publish failed: {e}")
 
     def _cancel_remote(self, job):
-        """Killing project.py leaves whatever it already submitted in Comfy's queue; remove those too."""
+        """Killing project.py leaves what it already queued on the backend: the job's target drops those prompts."""
         try:
-            if job.lane == "runpod":
-                n = self._cancel_pod(job)
-            else:
-                n = self._cancel_cloud(job) if job.cloud_ids else 0
-                n += self._cancel_local(job) if job.lane == "local" else 0
+            target = self.target_of(job)
+            n = target.cancel(job.prompt_ids) if target and job.prompt_ids else 0
             jobstore.append_log(job.id, f"cancelled: removed {n} job(s) from the ComfyUI queue" if n else "cancelled: nothing left in the ComfyUI queue")
         except Exception as e:  # noqa: BLE001
             jobstore.append_log(job.id, f"cancelled, but could not clear the ComfyUI queue: {e}")
 
     @staticmethod
-    def _post_json(call, path, body):
-        return call(path, json.dumps(body).encode(), {"Content-Type": "application/json"}, "POST")
-
-    def _cancel_cloud(self, job):
-        if not config.cloud_key_present():
-            return 0  # without a key the cloud queue is unreachable, and _request exits on that
-        try:
-            running = json.dumps(json.loads(comfy_api._request("/api/queue")).get("queue_running"))
-        # _request exits on a 402 (the account can't pay): the cancel goes on without the cloud queue
-        except (urllib.error.URLError, ValueError, SystemExit):  # NOSONAR(S5754)
-            running = ""
-        n = 0
-        for pid in job.cloud_ids:
-            try:
-                if pid in running:
-                    self._post_json(comfy_api._request, "/api/interrupt", {"prompt_id": pid})
-                self._post_json(comfy_api._request, "/api/queue", {"delete": [pid]})
-                n += 1
-            except (urllib.error.URLError, SystemExit):  # NOSONAR(S5754) already finished / not found, or a 402 exit
-                pass
-        return n
-
-    QUEUE_PATH = "/queue"
-
-    @staticmethod
-    def _caller(server):
-        def call(path, data=None, headers=None, method="GET"):
-            req = urllib.request.Request(server + path, data=data, headers=headers or {}, method=method)
-            with urllib.request.urlopen(req, timeout=10) as r:
-                return r.read()
-        return call
-
-    def _cancel_pod(self, job):
-        """The prompts this job queued on the pod: deleted, the running one interrupted (the pod stays up; its watchdog ends it)."""
-        pod = runpod_pod.find()
-        if not pod or not job.cloud_ids:
-            return 0
-        call = self._caller(runpod_pod.url(pod["id"]))
-        try:
-            running = json.dumps(json.loads(call(self.QUEUE_PATH)).get("queue_running"))
-        except (urllib.error.URLError, ValueError):
-            return 0
-        for pid in job.cloud_ids:
-            if pid in running:
-                self._post_json(call, "/interrupt", {"prompt_id": pid})
-        self._post_json(call, self.QUEUE_PATH, {"delete": job.cloud_ids})
-        return len(job.cloud_ids)
-
-    def _cancel_local(self, job):
-        server = (job.req.get("server") or LOCAL_DEFAULT).rstrip("/")
-        call = self._caller(server)
-        wanted = {str(s) for s in job.req.get("stages") or []}
-
-        def mine(item):  # LocalTarget.submit labels each prompt "<project> stage N[ ...]"
-            extra = item[3] if len(item) > 3 and isinstance(item[3], dict) else {}
-            label = extra.get("label", "")
-            m = re.match(rf"{re.escape(job.project)} stage (\d+)", label)
-            return bool(m) and (not wanted or m.group(1) in wanted)
-
-        try:
-            q = json.loads(call(self.QUEUE_PATH))
-        except (urllib.error.URLError, ValueError):
-            return 0  # server not up: nothing to clear
-        pending = [i[1] for i in q.get("queue_pending", []) if mine(i)]
-        if pending:
-            self._post_json(call, self.QUEUE_PATH, {"delete": pending})
-        if any(mine(i) for i in q.get("queue_running", [])):
-            call("/interrupt", b"{}", {"Content-Type": "application/json"}, "POST")
-            pending.append("running")
-        return len(pending)
-
+    def target_of(job):
+        """Where the job's prompts are queued: the local ComfyUI it ran on, the pod (if it is still there), or Comfy Cloud."""
+        if job.lane == "runpod":
+            pod = runpod_pod.find()
+            return targets.get("local", server=runpod_pod.url(pod["id"])) if pod else None
+        if job.lane == "local":
+            return targets.get("local", server=job.req.get("server") or None)
+        return targets.get("cloud")
 
 if __name__ == "__main__":
     Daemon().run()

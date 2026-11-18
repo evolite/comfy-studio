@@ -5,7 +5,8 @@ JSON in `data`, plus the columns the two sides change independently (`status`, `
 overwrites the other's change: the server only flips queued -> cancelled, sets `cancel` on a running job and clears
 `retry_at`; the daemon claims queued -> running with a conditional update and owns the row from then on.
 Each job's output goes to LOG_DIR/<id>.log, written by the job's own process (so it survives a daemon restart) and read
-by both sides. `settings` holds the 🔔 notify state.
+by both sides. `settings` holds the 🔔 notify state. Status `held` = a "Start batch" click waiting for the batch to fill
+(the daemon never runs it; jobs.Manager releases them to `queued` together).
 """
 import json
 import sqlite3
@@ -112,6 +113,19 @@ def claim(jid: str) -> bool:
 
 def cancel_queued(jid: str) -> bool:
     return conn().execute("UPDATE jobs SET status = 'cancelled', updated = ? WHERE id = ? AND status = 'queued'", (time.time(), jid)).rowcount == 1
+
+
+def release_held() -> None:
+    """The "Start batch" jobs go into the queue, all at once."""
+    conn().execute("UPDATE jobs SET status = 'queued', updated = ? WHERE status = 'held'", (time.time(),))
+
+
+def cancel_held(jid: str | None = None) -> None:
+    """Drop one held job, or every one."""
+    sql, args = ("UPDATE jobs SET status = 'cancelled', updated = ? WHERE status = 'held'", (time.time(),))
+    if jid:
+        sql, args = sql + " AND id = ?", (*args, jid)
+    conn().execute(sql, args)
 
 
 def request_cancel(jid: str) -> None:

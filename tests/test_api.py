@@ -86,10 +86,10 @@ def test_remix_copies_picked_stages():
 
 
 def _jobs():
-    """Every job in the store, oldest first."""
+    """Every job in the store but the held "Start batch" ones, oldest first."""
     import jobstore
     from jobs import Job
-    return [Job.from_data(d) for d in reversed(jobstore.recent())]
+    return [Job.from_data(d) for d in reversed(jobstore.recent()) if d["status"] != "held"]
 
 
 def test_job_flags_a_memory_check_free():
@@ -109,7 +109,7 @@ def test_job_state_comes_from_event_lines():
     j.emit("  [stage_1] FAILED looking text without an event changes nothing")
     j.emit('::event {"stage": "2", "status": "queued"}')
     j.emit('::event {"stage": "1", "status": "done", "processed": 31}')
-    assert j.stage_status == {"1": "done", "2": "queued"} and j.cloud_ids == ["abc"] and j.took["1"] == 31 and j.eta["1"] == 40
+    assert j.stage_status == {"1": "done", "2": "queued"} and j.prompt_ids == ["abc"] and j.took["1"] == 31 and j.eta["1"] == 40
 
 
 def test_stale_clips_flag_clips_older_than_their_source():
@@ -352,12 +352,23 @@ def test_animate_batch_spans_projects(monkeypatch):
     r = m.add_to_batch("20261010_batch_b", "animate", {"stages": [1]})  # the total reaches the size: both projects fire
     assert r["job"]["project"] == "20261010_batch_b" and r["pending"] == 0 and m.batch_state() == []
     assert {j.project: j.req["stages"] for j in _jobs()} == {"20261010_batch_a": [1, 2], "20261010_batch_b": [1]}
-    m.add_to_batch("gone_project", "animate", {"stages": [1]})
+    with pytest.raises(ApiError):  # a click that can't run is refused when it is made, not held
+        m.add_to_batch("gone_project", "animate", {"stages": [1]})
+    assert m.batch_state() == []
     m.add_to_batch("20261010_batch_a", "animate", {"stages": [3]})
-    with pytest.raises(ApiError):  # a batch that can't be submitted stays queued, the others still go out
-        m.flush_batch()
-    assert [b["project"] for b in m.batch_state()] == ["gone_project"]
+    m.flush_batch()
     assert any(j.req["stages"] == [3] for j in _jobs())
+
+
+def test_held_batch_survives_a_new_manager(monkeypatch):
+    """The batch lives in the job store: a web-server restart (a new Manager) still has it."""
+    from jobs import Manager
+    _batch_project()
+    monkeypatch.setattr(config, "animate_batch_size", lambda: 3)
+    Manager().add_to_batch("20261010_batch", "animate", {"stages": [1, 2]})
+    m = Manager()
+    assert m.batch_state()[0]["stages"] == [1, 2] and not _jobs() and not m.busy()
+    assert m.add_to_batch("20261010_batch", "animate", {"stages": [3]})["job"]["req"]["stages"] == [1, 2, 3]
 
 
 def test_animate_batch_endpoints(monkeypatch):

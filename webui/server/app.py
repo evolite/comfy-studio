@@ -743,7 +743,7 @@ def app_settings_test_push():
 @app.get("/api/events")
 async def live_events(request: Request):
     """SSE: what changed (jobs, the batch queue, a project's files), so the UI refreshes it instead of polling (live.py)."""
-    return StreamingResponse(live.stream(request, manager), media_type="text/event-stream",
+    return StreamingResponse(live.stream(request), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 

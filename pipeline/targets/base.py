@@ -7,6 +7,7 @@ A target turns a StageJob into a saved image:
     target.before_batch(jobs)                    # e.g. unload models the next batch doesn't need
     target.submit(job) for every job             # all queued up front, so the whole queue is visible
     for job in target.collect(jobs): ...         # yields each job as it finishes (job.final set, or job.error)
+    target.cancel(prompt_ids)                    # pull them off the queue (interrupt the running one): the job queue's cancel
 """
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -57,4 +58,8 @@ class Target:
         raise NotImplementedError
 
     def collect(self, jobs: list):
+        raise NotImplementedError
+
+    def cancel(self, prompt_ids: list) -> int:
+        """Remove these prompts from the target's queue, interrupting the one running; returns how many it was asked to drop."""
         raise NotImplementedError

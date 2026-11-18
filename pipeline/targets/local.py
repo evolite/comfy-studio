@@ -294,6 +294,14 @@ class LocalTarget(Target):
         print(f"  [{job.debug_dir.name}] queued" + (f" expected {eta:.0f}s" if eta else ""), flush=True)
         events.stage(job.debug_dir.name, "queued", prompt_id=job.handle, expected=round(eta) if eta else None)
 
+    def cancel(self, prompt_ids: list) -> int:
+        for pid in prompt_ids:
+            try:
+                cancel(self.server, pid)
+            except (urllib.error.URLError, ConnectionError):
+                pass  # already gone, or the server is down: nothing left to clear
+        return len(prompt_ids)
+
     def collect(self, jobs: list):
         """ComfyUI runs its queue in order, so wait for the jobs in order."""
         for job in jobs:

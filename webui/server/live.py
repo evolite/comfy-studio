@@ -1,8 +1,8 @@
 """Live updates for the web UI (GET /api/events, server-sent events): the UI refreshes a query when the server says it
 changed, instead of polling for it.
 
-    {"type": "jobs"}                 the job store changed; while a job runs, also every ACTIVE_TICK s (its progress bar moves)
-    {"type": "batch"}                the "Start batch" queue changed
+    {"type": "jobs"}                 the job store changed (the "Start batch" queue too: held jobs); while a job runs, also
+                                     every ACTIVE_TICK s (its progress bar moves)
     {"type": "project", "name": n}   a file under data/pipelines/<n>/ changed (stills, clips, edits, project.json; not _debug/)
     {"type": "projects"}             a project folder appeared or went away, or a project.json changed (the project list)
 
@@ -70,10 +70,10 @@ class ProjectWatch:
 WATCH = ProjectWatch(config.PIPELINES_DIR)
 
 
-async def stream(request, manager):
+async def stream(request):
     """The SSE body for one open page."""
     WATCH.start()
-    rev, batch = WATCH.rev, manager.batch_rev
+    rev = WATCH.rev
     jobs_v, ticked, pinged = None, 0.0, time.time()
     yield "retry: 3000\n\n"
     while not await request.is_disconnected():
@@ -83,9 +83,6 @@ async def stream(request, manager):
         if v != jobs_v or (active and now - ticked >= ACTIVE_TICK):
             out.append({"type": "jobs"})
             jobs_v, ticked = v, now
-        if manager.batch_rev != batch:
-            batch = manager.batch_rev
-            out.append({"type": "batch"})
         rev, changes = WATCH.since(rev)
         for t, n in dict.fromkeys(changes):  # each project once per step
             out.append({"type": t, "name": n} if n else {"type": t})

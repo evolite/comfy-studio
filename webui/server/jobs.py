@@ -121,7 +121,7 @@ class Job:
         self.mem_freed = None  # why the local batch had to free memory first (memory check), else None
         self.attempt = 1  # auto-retries count up from the job they retry
         self.retry_at = None  # when this failed job is submitted again (None: it won't be)
-        self.cloud_ids = []  # prompt ids this job submitted (Comfy Cloud, or the pod), so cancel can pull them off the remote queue
+        self.prompt_ids = []  # prompt ids this job queued (any backend), so cancel can pull them off that queue
         self.last = ""  # the latest log line (the jobs panel's one-line status)
         self.pid = None  # the daemon's wrapper process (its process group = the job), so another daemon can reattach or kill it
         self.cancel_requested = False
@@ -129,7 +129,7 @@ class Job:
 
     # the state that goes into jobstore (everything but the log lines, which live in the job's log file)
     STORED = ("id", "project", "action", "argv", "req", "cost", "lane", "status", "stage_status", "returncode", "created", "started",
-              "ended", "eta", "took", "cursor", "last_done", "frames", "mem_freed", "attempt", "retry_at", "cloud_ids", "last", "pid", "log_offset")
+              "ended", "eta", "took", "cursor", "last_done", "frames", "mem_freed", "attempt", "retry_at", "prompt_ids", "last", "pid", "log_offset")
 
     def to_data(self) -> dict:
         return {k: getattr(self, k) for k in self.STORED}
@@ -138,7 +138,7 @@ class Job:
     def from_data(cls, d: dict) -> "Job":
         j = cls.__new__(cls)
         j.lines, j.proc = [], None
-        j.last, j.pid, j.cloud_ids, j.attempt, j.retry_at, j.mem_freed, j.frames, j.log_offset = "", None, [], 1, None, None, None, 0
+        j.last, j.pid, j.prompt_ids, j.attempt, j.retry_at, j.mem_freed, j.frames, j.log_offset = "", None, [], 1, None, None, None, 0
         for k in cls.STORED:
             if k in d:
                 setattr(j, k, d[k])
@@ -221,11 +221,11 @@ class Job:
             self._stage_event(str(e["stage"]), e)
 
     def _stage_event(self, sid, e):
-        """A stage's new status and whatever timing data it carries; `submitted` (to Comfy Cloud or the pod) is running,
-        and its prompt id is kept so a cancel can pull it off that queue."""
+        """A stage's new status and whatever timing data it carries; `submitted` (to Comfy Cloud or the pod) is running.
+        Every prompt id is kept, so a cancel can pull it off the backend's queue (queue_daemon target_of)."""
         st = {"submitted": "running"}.get(e["status"], e["status"])
-        if e["status"] == "submitted" and e.get("prompt_id"):
-            self.cloud_ids.append(e["prompt_id"])
+        if e.get("prompt_id") and e["prompt_id"] not in self.prompt_ids:
+            self.prompt_ids.append(e["prompt_id"])
         self.stage_status[sid] = st
         if e.get("expected"):
             self.eta[sid] = int(e["expected"])
@@ -238,12 +238,11 @@ class Job:
 
 
 class Manager:
-    """The web server's side: submits (validated argv into jobstore), cancels, retries and reads jobs; the "Start batch" queue."""
+    """The web server's side: submits (validated argv into jobstore), cancels, retries and reads jobs, and holds "Start batch"
+    clicks as `held` jobs in the same store."""
 
     def __init__(self):
         self.lock = threading.Lock()
-        self.animate_batch = {}  # (project, action, folder) -> {"stages": [ids], "added": ts}: armed "Start batch" clicks, sent as one job
-        self.batch_rev = 0  # bumped on every change of animate_batch (live.py tells open pages)
 
     @staticmethod
     def get(jid):
@@ -423,73 +422,57 @@ class Manager:
                     raise ApiError(f"{action} already {j.status} as {j.id}", 409)
             return Job.from_data(jobstore.insert(job.to_data()))
 
-    def _submit_batch(self, key, stages):
-        """Submit one merged animate job for a batch (call outside self.lock: submit takes it). A duplicate of a
-        queued/running job just returns that job: the batch is already covered."""
-        project, action, folder = key
-        try:
-            return self.submit(project, action, {"action": action, "stages": stages, "folder": folder}).info()
-        except ApiError as e:
-            if e.status != 409:
-                raise
-            for j in self.active(project=project):
-                job_folder = j.req.get("folder") or ""
-                same = j.action == action and job_folder == folder and sorted(map(int, j.req.get("stages") or ())) == sorted(stages)
-                if same:
-                    return j.info()
-            raise
+    @staticmethod
+    def _held() -> list:
+        return [Job.from_data(d) for d in jobstore.by_status("held")]
 
     def add_to_batch(self, project, action, req):
-        """The web UI's armed "Start batch" (RunPod target): queue animate clicks, from any project, and fire them all once
-        the ⚙ batch size is reached, so the whole batch shares one pod start and one model load. A job covers one project,
-        action and folder: the batch's jobs run one after another in the runpod lane."""
+        """The web UI's armed "Start batch" (RunPod target): animate clicks, from any project, wait as `held` jobs (one per
+        project, action and folder; a click on the same one adds its stages) and are released together once the ⚙ batch
+        size is reached, so the whole batch shares one pod start. Released, they run one after another in the runpod lane."""
         if action not in ANIMATE:
             raise ApiError(f"{action} can't be batched", 400)
         stages = [int(s) for s in req.get("stages") or []]
         if not stages:
             raise ApiError("a batch needs stage ids", 400)
-        key = (project, action, req.get("folder") or "")
+        folder = req.get("folder") or ""
         with self.lock:
-            entry = self.animate_batch.setdefault(key, {"stages": [], "added": time.time()})
-            entry["stages"] = [*dict.fromkeys([*entry["stages"], *stages])]  # keep order, drop repeats
-            self.batch_rev += 1
-            total = sum(len(e["stages"]) for e in self.animate_batch.values())
+            same = next((j for j in self._held() if (j.project, j.action, j.req.get("folder") or "") == (project, action, folder)), None)
+            stages = [*dict.fromkeys([*(same.req["stages"] if same else []), *stages])]  # keep order, drop repeats
+            r = {"action": action, "stages": stages, "folder": folder}
+            argv = self.build_argv(project, action, r)  # validated now: a bad click is refused, not held
+            if same:
+                same.req, same.argv = r, argv
+                jobstore.save(same.to_data())
+            else:
+                job = Job("", project, action, argv, r)
+                job.status = "held"
+                jobstore.insert(job.to_data())
+            total = sum(len(j.req["stages"]) for j in self._held())
         size = config.animate_batch_size()
         if total < size:
             return {"job": None, "pending": total, "size": size}
         sent = self.flush_batch()["sent"]
-        job = next((j for j in sent if j["project"] == project and j["action"] == action and (j["req"].get("folder") or "") == key[2]), None)
+        job = next((j for j in sent if j["project"] == project and j["action"] == action and (j["req"].get("folder") or "") == folder), None)
         return {"job": job, "pending": 0, "size": size}
 
     def flush_batch(self):
-        """Fire every pending batch, even below the batch size. One that can't be submitted stays queued and its error is
-        raised once the others have gone out."""
+        """Release every held job now, even below the batch size (one already queued or running the same way is dropped)."""
         with self.lock:
-            pending = {k: e["stages"] for k, e in self.animate_batch.items()}
-        sent, errors = [], []
-        for key, stages in pending.items():
-            try:
-                sent.append(self._submit_batch(key, stages))
-            except ApiError as e:
-                errors.append(f"{key[0]}: {e}")
-                continue
-            with self.lock:
-                if self.animate_batch.get(key, {}).get("stages") == stages:
-                    del self.animate_batch[key]  # unchanged since the snapshot: the whole batch went out
-                    self.batch_rev += 1
-        if errors:
-            raise ApiError("; ".join(errors), 400)
-        return {"sent": sent, "pending": self.batch_state()}
+            busy = {j.key() for j in self.active()}
+            held = self._held()
+            for j in held:
+                if j.key() in busy:
+                    jobstore.cancel_held(j.id)
+            jobstore.release_held()
+        return {"sent": [self.get(j.id).info() for j in held], "pending": []}
 
     def clear_batch(self):
-        with self.lock:
-            self.animate_batch.clear()
-            self.batch_rev += 1
+        jobstore.cancel_held()
 
     def batch_state(self):
-        with self.lock:
-            return [{"project": p, "action": a, "folder": f, "stages": e["stages"], "added": e["added"]}
-                    for (p, a, f), e in sorted(self.animate_batch.items())]
+        return [{"project": j.project, "action": j.action, "folder": j.req.get("folder") or "", "stages": j.req["stages"], "added": j.created}
+                for j in sorted(self._held(), key=lambda j: (j.project, j.action, j.req.get("folder") or ""))]
 
     def cancel(self, jid):
         """A failed job waiting for its auto-retry: stop that; queued: cancelled at once; running: the daemon kills it and
@@ -529,7 +512,8 @@ class Manager:
 
     @staticmethod
     def list():
-        return [Job.from_data(d).info() for d in jobstore.recent()]
+        """The jobs panel: everything but the held batch (the batch bar shows that)."""
+        return [Job.from_data(d).info() for d in jobstore.recent() if d["status"] != "held"]
 
 
 manager = Manager()

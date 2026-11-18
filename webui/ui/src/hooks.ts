@@ -21,15 +21,14 @@ export function useProject(name: string) {
 }
 
 /** The server's live updates (/api/events, webui/server/live.py): each message names what changed, and only that query is
- * refreshed: jobs (also every 2 s while one runs, for its progress bar), the "Start batch" queue, a project's files, the list. */
+ * refreshed: jobs and the "Start batch" queue (also every 2 s while a job runs, for its progress bar), a project's files, the list. */
 export function useLiveUpdates() {
   const qc = useQueryClient();
   useEffect(() => {
     const es = new EventSource("/api/events");
     es.onmessage = (m) => {
       const e = JSON.parse(m.data) as { type: string; name?: string };
-      if (e.type === "jobs") void qc.invalidateQueries({ queryKey: ["jobs"] });
-      else if (e.type === "batch") void qc.invalidateQueries({ queryKey: ["animate-batch"] });
+      if (e.type === "jobs") { void qc.invalidateQueries({ queryKey: ["jobs"] }); void qc.invalidateQueries({ queryKey: ["animate-batch"] }); }
       else if (e.type === "project" && e.name) void qc.invalidateQueries({ queryKey: ["project", e.name] });
       else if (e.type === "projects") void qc.invalidateQueries({ queryKey: ["projects"] });
     };
