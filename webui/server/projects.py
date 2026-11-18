@@ -423,6 +423,49 @@ def duplicate_stage(name, sid):
     return new
 
 
+KF_MAX_SECONDS = 10.0  # a keyframe clip stays on the regular pod GPUs (config.RUNPOD_BIG_SECONDS)
+_MOTION_HEAD = re.compile(r"^For the target video,.*?fully referenced\.\s*", re.S)
+
+
+def _beat(motion: str, first: bool) -> str:
+    """A stage's motion as one beat of a keyframe clip: no H3 picture header or section labels, and only the first beat keeps
+    the voice line."""
+    body = _MOTION_HEAD.sub("", motion.split("overall_soundscape:")[0]).replace("integrated_multimodal_description: [Shot 1]", "").strip()
+    return body if first else body.replace("Her voice (S1) is {voice}.", "").strip()
+
+
+@locked
+def keyframe_stage(name, ids):
+    """One clip through the stills of stages `ids`, in that order: a copy of the first (its stills, LoRAs, voice) placed after the
+    last, `keyframes` = the others, each pinned where its beat starts (the stages' durations, scaled into KF_MAX_SECONDS), and the
+    stages' motions joined as beats."""
+    if len(ids) < 2 or len(set(ids)) != len(ids):
+        raise ApiError("pick two or more different stages")
+    cfg = load(name)
+    by = {s.get("id", pos): s for pos, s in enumerate(cfg["stages"], 1)}
+    if missing := [i for i in ids if i not in by]:
+        raise ApiError(f"no stage {missing}", 404)
+    durs = [float(by[i].get("duration") or 5) for i in ids]
+    total = min(sum(durs), KF_MAX_SECONDS)
+    starts = [sum(durs[:k]) * total / sum(durs) for k in range(len(ids))]
+    first = by[ids[0]]
+    new = {**json.loads(json.dumps(first)), "id": max(stage_ids(cfg), default=0) + 1, "duration": round(total, 1),
+           "keyframes": [{"stage": i, "at": round(t, 2)} for i, t in zip(ids[1:], starts[1:])]}
+    new["done"] = [k for k in new.get("done") or [] if not k.endswith("/videos")]
+    sound = (first.get("motion") or "").partition("overall_soundscape:")[2]
+    beats = [_beat(by[i].get("motion") or "", k == 0) for k, i in enumerate(ids)]
+    new["motion"] = " Then, ".join(b for b in beats if b) + (f"\n\noverall_soundscape:{sound}" if sound else "")
+    for k in ("video_seed",):
+        new.pop(k, None)
+    cfg["stages"].insert(max(pos for pos, s in enumerate(cfg["stages"]) if s.get("id", pos + 1) in ids) + 1, new)
+    d = project_dir(name)
+    for f in [d] + [p for p in d.iterdir() if p.is_dir() and not p.name.startswith("_") and p.name not in ("videos", "edits")]:
+        if (f / f"stage_{ids[0]}.png").is_file():
+            shutil.copy2(f / f"stage_{ids[0]}.png", f / f"stage_{new['id']}.png")
+    _write_json(d / PROJECT_JSON, cfg)
+    return new
+
+
 @locked
 def delete_stage(name, sid):
     cfg = load(name)

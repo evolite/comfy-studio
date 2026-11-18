@@ -170,6 +170,7 @@ textarea { width:100%; resize:vertical; font:12.5px/1.45 ui-monospace, monospace
 .afgo:hover:not(:disabled) { filter:brightness(1.08); } .afgo:disabled { opacity:.4; cursor:not-allowed; }
 .afgo-main { grid-area:main; font-weight:700; font-size:14px; } .afgo-sub { grid-area:sub; font-size:11px; opacity:.85; } .afgo-play { grid-area:play; font-size:16px; }
 .afgo.interp { background:var(--interp); }
+.afgo.keyframes { background:var(--animate); filter:saturate(.7); grid-column:1 / -1; }
 .afgos { display:grid; grid-template-columns:1fr 1fr; gap:8px; } @media (max-width:520px) { .afgos { grid-template-columns:1fr; } }
 
 /* the specific still/clip that landed since you last clicked the stage */

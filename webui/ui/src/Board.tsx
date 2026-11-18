@@ -180,6 +180,7 @@ type RunMenuProps = {
   readonly sources: AnimSource[];
   readonly allow?: Set<string>;  // only these actions are offered (the current phase's applicable runs); undefined = all
   readonly clipFrom?: string;  // the folder whose clips Interpolate reads (the Animate folder); defaults to workFolder
+  readonly onKeyframes?: (folder: string) => void;  // 2+ stages picked: one clip through their stills (a new keyframe stage)
 };
 
 type Est = { known: number; of: number; seconds: number; load: number; parallel?: boolean };
@@ -216,9 +217,9 @@ function animNote(src: AnimSource): string {
 }
 
 /** The Animate block of a Run menu: pick the source folder, then Animate or Animate smooth. */
-function AnimateForm({ sources, src, stages, why, smooth, batchHint, onPickSource, onRun }: {
+function AnimateForm({ sources, src, stages, why, smooth, batchHint, onPickSource, onRun, onKeyframes }: {
   readonly sources: AnimSource[]; readonly src?: AnimSource; readonly stages: number; readonly why: (a: string) => string; readonly smooth: boolean; readonly batchHint: boolean;
-  readonly onPickSource: (f: string) => void; readonly onRun: (a: string, folder: string) => void;
+  readonly onPickSource: (f: string) => void; readonly onRun: (a: string, folder: string) => void; readonly onKeyframes?: (folder: string) => void;
 }) {
   const noStill = !src || src.missing.length > 0;
   return (
@@ -249,6 +250,13 @@ function AnimateForm({ sources, src, stages, why, smooth, batchHint, onPickSourc
             <span className="afgo-play">▶</span>
             <span className="afgo-sub">48 fps{batchHint ? " · → batch" : ""}</span>
           </button>}
+          {onKeyframes && stages > 1 && <button className="afgo keyframes" disabled={noStill || !!why("animate")}
+            title={why("animate") || `one clip through these ${stages} stills in order: a new stage after the last, its motion the stages' motions joined (edit it there)`}
+            onClick={() => onKeyframes(src!.f)}>
+            <span className="afgo-main">Keyframes</span>
+            <span className="afgo-play">▶</span>
+            <span className="afgo-sub">{stages} stills → 1 clip</span>
+          </button>}
         </div>
       </>}
     </div>
@@ -256,7 +264,7 @@ function AnimateForm({ sources, src, stages, why, smooth, batchHint, onPickSourc
 }
 
 /** One popover for every run action, grouped by pipeline step; used for the selection and for a single stage. */
-export function RunMenu({ project, ids, label, workFolder, why, onGo, sources, allow, clipFrom }: RunMenuProps) {
+export function RunMenu({ project, ids, label, workFolder, why, onGo, sources, allow, clipFrom, onKeyframes }: RunMenuProps) {
   const [open, setOpen] = useState(false);
   const [pick, setPick] = useState<string | null>(null);
   const off = useHiddenActions();
@@ -289,7 +297,8 @@ export function RunMenu({ project, ids, label, workFolder, why, onGo, sources, a
             <span className="dim">Takes</span>
             <span className="seg">{[1, 2, 4].map((n) => <button key={n} className={nTakes === n ? "on" : ""} onClick={() => setPreviewTakes(n)}>×{n}</button>)}</span>
           </div>}
-          {shown("animate") && <AnimateForm sources={sources} src={src} stages={ids.length} why={why} smooth={shown("animate_rife")} batchHint={batchHint} onPickSource={setPick} onRun={runIt} />}
+          {shown("animate") && <AnimateForm sources={sources} src={src} stages={ids.length} why={why} smooth={shown("animate_rife")} batchHint={batchHint} onPickSource={setPick} onRun={runIt}
+            onKeyframes={onKeyframes && ((f) => { setOpen(false); onKeyframes(f); })} />}
           {shown("interpolate") && <div className="aform">
             <button className="afgo interp" disabled={!!why("interpolate")} title={why("interpolate") || ACTIONS.interpolate.tip}
               onClick={() => runIt("interpolate", clipFrom ?? workFolder)}>
@@ -622,6 +631,10 @@ export default function Board({ name }: { readonly name: string }) {
     }
     run.mutate({ action, stages: ids, folder: sendFolder ? folder : undefined, ...takes, ...extra, ...src }, { onSuccess: () => settleDone(action, f, ids), onError });
   };
+  // the picked stages in board order -> a new keyframe stage, then animate it from the same folder
+  const keyframeClip = (f: string) => api<Stage>(`/projects/${name}/keyframes`, "POST", { stages: allStages.map((s) => s.id).filter((i) => sel.has(i)) })
+    .then(async (n) => { setSel(new Set()); await proj.refetch(); setMsg(`stage ${n.id}: keyframe clip`); await go("animate", [n.id], { folder: f }); })
+    .catch(showMsgErr);
   const whyCtx: WhyCtx = { p, stages: allStages, folder, animFolder, localDown: !!health && !health.local };
   const disabledWhy = (a: string, ids: number[] = []) => disabledReason(a, ids, whyCtx);
   const toggle = (id: number, range = false) => setSel((prev) => {
@@ -739,7 +752,8 @@ export default function Board({ name }: { readonly name: string }) {
           <button className={`btn ${allSelDone ? "donebtn" : ""}`} disabled={!sel.size}
             title={bulkDoneTip(sel.size, allSelDone, folder)}
             onClick={() => { void markDone(selected, !allSelDone); clearIfSelection(selected); }}>✓</button>
-          <RunMenu project={name} ids={runIds} label="Run" workFolder={folder} allow={isUpscaleStep(phase) ? allowFor(folder) : undefined} sources={animSources(p, runIds)} why={(a) => disabledWhy(a, runIds)} onGo={(a, f) => void go(a, runIds, f === undefined ? {} : { folder: f })} clipFrom={animFolder} />
+          <RunMenu project={name} ids={runIds} label="Run" workFolder={folder} allow={isUpscaleStep(phase) ? allowFor(folder) : undefined} sources={animSources(p, runIds)} why={(a) => disabledWhy(a, runIds)} onGo={(a, f) => void go(a, runIds, f === undefined ? {} : { folder: f })} clipFrom={animFolder}
+            onKeyframes={sel.size > 1 ? (f) => void keyframeClip(f) : undefined} />
           <button className="btn" title="add a stage" onClick={() => void api(`/projects/${name}/stages`, "POST").then(() => proj.refetch())}>＋</button>
         </div>
       </div>

@@ -348,6 +348,12 @@ def stage_duplicate(name: str, sid: int):
     return P.duplicate_stage(name, sid)
 
 
+@app.post("/api/projects/{name}/keyframes")
+def stage_keyframes(name: str, body: dict = Body(...)):
+    """A new stage animating through the picked stages' stills as keyframes (projects.keyframe_stage)."""
+    return P.keyframe_stage(name, [int(i) for i in body.get("stages", [])])
+
+
 @app.patch("/api/projects/{name}/stages/{sid}")
 def stage_patch(name: str, sid: int, body: dict = Body(...)):
     return P.patch_stage(name, sid, body)
