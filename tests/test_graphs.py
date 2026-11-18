@@ -60,3 +60,30 @@ def test_ltx_template_links_resolve():
 def test_frames_grids():
     assert [ap.frames("minimax", s) for s in (1.0, 2.0, 2.9, 5.0)] == [39, 56, 73, 124]
     assert [ap.frames("ltx", s) for s in (0.5, 1.0, 2.0, 5.0)] == [17, 25, 49, 121]
+
+
+def test_keyframes_chain_one_guide_per_still_in_front_of_the_guider():
+    for path in TEMPLATES:
+        t = json.loads(path.read_text())
+        latent = next(n for n in t.values() if n["class_type"] == "SamplerCustomAdvanced")["inputs"]["latent_image"]
+        first = t["105:16"]["inputs"]["conditioning"]
+        g = ap.build_graph(t, "img.png", "P", 5.0, keyframes=[("b.png", 60), ("c.png", -1)])
+        assert g["kf0:load"]["inputs"]["image"] == "b.png" and g["kf1:load"]["inputs"]["image"] == "c.png"
+        assert g["kf0:guide"]["inputs"]["positive"] == first and g["kf1:guide"]["inputs"]["positive"] == ["kf0:guide", 0]
+        assert g["105:16"]["inputs"]["conditioning"] == ["kf1:guide", 0]
+        assert all(g[f"kf{i}:guide"]["inputs"]["latent"] == latent for i in (0, 1))
+        assert [g[f"kf{i}:guide"]["inputs"]["frame_idx"] for i in (0, 1)] == [60, -1]
+
+
+def test_keyframe_frames_spread_evenly_and_land_inside_the_clip():
+    total = ap.frames("minimax", 6.0)
+    assert ap.keyframe_frames("minimax", 6.0, [None, None]) == [72, total - 1]
+    assert ap.keyframe_frames("minimax", 6.0, [2.5, -1]) == [60, total - 24]
+    assert ap.keyframe_frames("minimax", 6.0, [99]) == [total - 1]
+
+
+def test_keyframe_refs_name_each_picture_once():
+    p = ap.keyframe_refs("She walks.", [72, 148])
+    assert p.splitlines()[:2] == ["At 3.00 seconds into the target video, <Picture 2> (from [Shot 1]) is fully referenced.",
+                                  "At 6.17 seconds into the target video, <Picture 3> (from [Shot 1]) is fully referenced."]
+    assert ap.keyframe_refs("<Picture 2> here", [72]) == "<Picture 2> here"

@@ -30,7 +30,7 @@ import voice_registry  # noqa: E402
 
 TIERS = [1.0, 2.0, 2.9, 5.0]
 STAGE_FIELDS = {"krea_scene", "il_scene", "il_background", "motion", "duration", "loras", "video_loras", "video_engine", "audio", "seed", "video_seed",
-                "il_denoise", "face_detailer_enabled", "face_wildcard", "done", "voice", "voices", "shot"}
+                "il_denoise", "face_detailer_enabled", "face_wildcard", "done", "voice", "voices", "shot", "keyframes"}
 PREVIEW_GATED = {action for (step, _), (action, _) in steps.ACTION_IDS.items() if steps.STEPS[step].needs}  # steps that build on an approved preview (animate only needs its own source still)
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 PROJECT_JSON = "project.json"  # a project's config file, in the project dir
@@ -254,6 +254,11 @@ def validate_stage(patch, label):
     d = patch.get("duration")
     if d is not None and ("duration" in patch) and (isinstance(d, bool) or not isinstance(d, (int, float)) or not 1.0 <= d <= 15.0):
         raise ApiError(f"{label}: duration must be between 1.0 and 15.0 seconds")
+    kfs = patch.get("keyframes")
+    if kfs is not None and not (isinstance(kfs, list) and all(
+            isinstance(k, dict) and set(k) <= {"stage", "at"} and isinstance(k.get("stage"), int) and not isinstance(k["stage"], bool)
+            and (k.get("at") is None or (isinstance(k["at"], (int, float)) and not isinstance(k["at"], bool))) for k in kfs)):
+        raise ApiError(f'{label}: keyframes must be a list of {{"stage": N, "at": seconds}} (at optional, negative = from the end)')
     shot = patch.get("shot")
     if shot and not (isinstance(shot, dict) and isinstance(shot.get("cam"), list) and len(shot["cam"]) == 3):
         raise ApiError(f"{label}: shot needs at least \"cam\": [x, y, z] (see `project.py <name> view`)")

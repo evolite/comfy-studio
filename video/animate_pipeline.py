@@ -13,7 +13,7 @@ Usage (normally via `project.py animate`, which writes these files from project.
   python3 video/animate_pipeline.py <pipeline_dir> \
       --motion-prompts <pipeline_dir>/motion_prompts.json \
       --durations /path/to/stage_durations.json \
-      [--loras loras.json] [--seeds seeds.json] [--engines engines.json]
+      [--loras loras.json] [--seeds seeds.json] [--engines engines.json] [--keyframes keyframes.json]
 """
 import argparse
 import json
@@ -158,9 +158,10 @@ def aspect_of(png: Path) -> str:
 
 def build_graph(template: dict, image_name: str, prompt: str, duration_value: float,
                 loras: dict | None = None, seed: int | None = None, megapixels: float | None = None, rife: bool = False,
-                engine: str = DEFAULT_ENGINE, audio: bool = False, aspect: str | None = None) -> dict:
+                engine: str = DEFAULT_ENGINE, audio: bool = False, aspect: str | None = None, keyframes: list | None = None) -> dict:
     """`template` = template_for(engine, audio). `audio` only matters for an engine that always makes sound (`mute`).
-    `aspect` (aspect_of(still)) sets the clip's aspect ratio; None keeps the template's."""
+    `aspect` (aspect_of(still)) sets the clip's aspect ratio; None keeps the template's.
+    `keyframes` = [(uploaded image name, frame index)] anchored after the first frame (add_keyframes; MiniMax only)."""
     e = engine_spec(engine)
     graph = json.loads(json.dumps(template))
     graph[e["image"][0]]["inputs"][e["image"][1]] = image_name
@@ -180,9 +181,51 @@ def build_graph(template: dict, image_name: str, prompt: str, duration_value: fl
         graph[video]["inputs"].pop("audio", None)
         for nid in drop:
             graph.pop(nid, None)
+    if keyframes:
+        add_keyframes(graph, keyframes, engine)
     if rife:
         add_rife(graph, engine)
     return graph
+
+
+def keyframe_frames(engine, seconds, ats: list) -> list:
+    """Frame index per keyframe from its `at` (seconds; negative = from the end; None = spread evenly, the last one on the
+    clip's last frame), clamped inside the clip. The stage's own still is frame 0."""
+    total, fps, n = frames(engine, seconds), engine_spec(engine)["fps"], len(ats)
+    out = []
+    for i, at in enumerate(ats):
+        f = total - 1 if at is None and i == n - 1 else round((seconds * (i + 1) / n if at is None else at) * fps)
+        f = total + f if f < 0 else f
+        out.append(min(max(f, 1), total - 1))
+    return out
+
+
+def keyframe_refs(prompt: str, frames_at: list, fps: int = 24) -> str:
+    """The motion with one H3 reference line per keyframe in front: <Picture 2> at its time, <Picture 3>, ..."""
+    lines = [f"At {f / fps:.2f} seconds into the target video, <Picture {i + 2}> (from [Shot 1]) is fully referenced."
+             for i, f in enumerate(frames_at) if f"<Picture {i + 2}>" not in prompt]
+    return "\n".join(lines + [prompt]) if lines else prompt
+
+
+def add_keyframes(graph: dict, keyframes: list, engine: str = DEFAULT_ENGINE) -> None:
+    """Anchor more stills inside a MiniMax clip: one LoadImage -> ImageScale -> MiniMaxH3AddGuide per (image, frame), chained in
+    front of the guider's conditioning (the node is made to be chained) against the sampler's latent."""
+    if engine != "minimax":
+        raise SystemExit(f"keyframes need the minimax engine, not {engine!r}")
+    e = engine_spec(engine)
+    guider = graph[e["model_dst"][1]]["inputs"]
+    sampler = next(n for n in graph.values() if n["class_type"] == "SamplerCustomAdvanced")["inputs"]
+    vae = graph[e["prompt"][0]]["inputs"]["vae"]
+    cond = guider["conditioning"]
+    for i, (image, frame) in enumerate(keyframes):
+        k = f"kf{i}"
+        graph[f"{k}:load"] = {"class_type": "LoadImage", "inputs": {"image": image}}
+        graph[f"{k}:scale"] = {"class_type": "ImageScale", "inputs": {"image": [f"{k}:load", 0], "upscale_method": "lanczos",
+                                "width": [e["size"], 0], "height": [e["size"], 1], "crop": "center"}}
+        graph[f"{k}:guide"] = {"class_type": "MiniMaxH3AddGuide", "inputs": {"positive": cond, "latent": sampler["latent_image"],
+                                "frame_idx": frame, "vae": vae, "image": [f"{k}:scale", 0]}}
+        cond = [f"{k}:guide", 0]
+    guider["conditioning"] = cond
 
 
 STOCK_H3_UNET = config.STOCK_H3_UNET
@@ -355,8 +398,15 @@ def _render_record(args, png: Path, prompts, durations, stage_loras, stage_seeds
     print(f"[stage_{stage_num}] loras={loras or 'none'} seed={seed}{' audio' if with_audio else ''}", flush=True)
     template = custom if custom and engine == DEFAULT_ENGINE and not with_audio else template_for(engine, with_audio)
     image = local.upload(server, png, f"{secrets.token_hex(4)}_{png.name}") if server else api.upload_image(png)  # pod: one inputs/ for every project
-    graph = build_graph(template, image, prompts[key], duration_value, loras, seed, args.megapixels,
-                        rife=bool(args.rife_dir), engine=engine, audio=with_audio, aspect=aspect_of(png))
+    kfs, prompt = args.stage_keyframes.get(key, []), prompts[key]
+    if kfs:
+        at = keyframe_frames(engine, duration_value, [k.get("at") for k in kfs])
+        names = [local.upload(server, Path(k["png"]), f"{secrets.token_hex(4)}_{Path(k['png']).name}") if server
+                 else api.upload_image(Path(k["png"])) for k in kfs]
+        print(f"[stage_{stage_num}] keyframes: " + ", ".join(f"{Path(k['png']).stem} @ frame {f}" for k, f in zip(kfs, at)), flush=True)
+        kfs, prompt = list(zip(names, at)), keyframe_refs(prompt, at, engine_spec(engine)["fps"])
+    graph = build_graph(template, image, prompt, duration_value, loras, seed, args.megapixels,
+                        rife=bool(args.rife_dir), engine=engine, audio=with_audio, aspect=aspect_of(png), keyframes=kfs or None)
     if server and engine == "minimax" and (unet := config.runpod_h3_unet()):
         pod_unet(graph, unet)
     return {"stage": stage_num, "graph": graph, "engine": engine, "loras": loras, "seed": seed, "audio": with_audio,
@@ -474,6 +524,8 @@ def main():
                     help="JSON {\"<stage>\": true} for stages whose clip should come with generated audio (uses the audio template)")
     ap.add_argument("--seeds", type=Path, default=None,
                     help="JSON {\"<stage>\": int} to pin a stage's noise seed (default: random per render, logged)")
+    ap.add_argument("--keyframes", type=Path, default=None,
+                    help='JSON {"<stage>": [{"png": path, "at": seconds|null}, ...]}: more stills anchored in that stage\'s clip (MiniMax)')
     ap.add_argument("--rife-dir", type=Path, default=None,
                     help="Animate + RIFE: also interpolate each clip in the same cloud job and save it to <dir>/videos/ (project.py: <project>/interp)")
     ap.add_argument("--server", default=None,
@@ -490,6 +542,7 @@ def main():
     stage_seeds = json.loads(args.seeds.read_text()) if args.seeds else {}
     stage_audio = json.loads(args.audio.read_text()) if args.audio else {}
     stage_engines = json.loads(args.engines.read_text()) if args.engines else {}
+    args.stage_keyframes = json.loads(args.keyframes.read_text()) if args.keyframes else {}
     _check_local_only(stage_loras, stage_engines, server)
 
     videos_dir = args.pipeline_dir / "videos"

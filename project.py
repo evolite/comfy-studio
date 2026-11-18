@@ -449,9 +449,23 @@ def animate_cmd(a, src, only):
     save(lora_p, {str(n): ids[n].get("video_loras", {}) for n in todo})
     save(seed_p, {str(n): ids[n]["video_seed"] for n in todo if "video_seed" in ids[n]})
     save(audio_p, {str(n): True for n in todo if ids[n].get("audio")})
+    kf_p = d / "_debug" / "keyframes.json"
+    save(kf_p, {str(n): stage_keyframes(src, ids, n) for n in todo if ids[n].get("keyframes")})
     return [sys.executable, str(ROOT / "video" / "animate_pipeline.py"), str(src), "--motion-prompts", str(motion_p),
-            "--durations", str(dur_p), "--loras", str(lora_p), "--seeds", str(seed_p), "--audio", str(audio_p), "--engines", str(engine_p)] + (["--megapixels", str(cfg["video_megapixels"])] if cfg.get("video_megapixels") else []) \
+            "--durations", str(dur_p), "--loras", str(lora_p), "--seeds", str(seed_p), "--audio", str(audio_p), "--engines", str(engine_p),
+            "--keyframes", str(kf_p)] + (["--megapixels", str(cfg["video_megapixels"])] if cfg.get("video_megapixels") else []) \
         + (["--rife-dir", str(d / interpolate.FOLDER)] if a.rife else []) + (["--server", pod_server(any(v["duration_value"] > config.RUNPOD_BIG_SECONDS for v in durs.values()))] if a.target == "runpod" and todo else [])
+
+
+def stage_keyframes(src, ids, n):
+    """Stage n's `keyframes` ([{"stage": k, "at": seconds}], `at` optional) as the stills in the same folder as n's own."""
+    out = []
+    for kf in ids[n]["keyframes"]:
+        png = src / f"stage_{kf['stage']}.png"
+        if kf["stage"] not in ids or not png.exists():
+            sys.exit(f"stage {n}: keyframe stage {kf['stage']} has no {src.name}/stage_{kf['stage']}.png")
+        out.append({"png": str(png), "at": kf.get("at")})
+    return out
 
 
 def pod_server(big=False):
