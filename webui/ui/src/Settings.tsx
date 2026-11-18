@@ -235,7 +235,6 @@ function RunButtons() {
         </Fragment>
       ))}
       <span className="rtitle">Animate (48 fps)</span><span /><label><input type="checkbox" aria-label="Animate" checked={!off.has("animate_rife")} onChange={(e) => setActionHidden("animate_rife", !e.target.checked)} /></label>
-      <span className="rtitle">Interpolate clips</span><label><input type="checkbox" aria-label="Interpolate clips" checked={!off.has("interpolate")} onChange={(e) => setActionHidden("interpolate", !e.target.checked)} /></label><span />
     </div>
   );
 }

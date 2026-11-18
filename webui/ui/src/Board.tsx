@@ -180,7 +180,6 @@ type RunMenuProps = {
   readonly onGo: (a: string, folder?: string) => void;
   readonly sources: AnimSource[];
   readonly allow?: Set<string>;  // only these actions are offered (the current phase's applicable runs); undefined = all
-  readonly clipFrom?: string;  // the folder whose clips Interpolate reads (the Animate folder); defaults to workFolder
   readonly onKeyframes?: (folder: string) => void;  // 2+ stages picked: one clip through their stills (a new keyframe stage)
 };
 
@@ -260,7 +259,7 @@ function AnimateForm({ sources, src, stages, why, batchHint, onPickSource, onRun
 }
 
 /** One popover for every run action, grouped by pipeline step; used for the selection and for a single stage. */
-export function RunMenu({ project, ids, label, workFolder, why, onGo, sources, allow, clipFrom, onKeyframes }: RunMenuProps) {
+export function RunMenu({ project, ids, label, workFolder, why, onGo, sources, allow, onKeyframes }: RunMenuProps) {
   const [open, setOpen] = useState(false);
   const [pick, setPick] = useState<string | null>(null);
   const off = useHiddenActions();
@@ -295,14 +294,6 @@ export function RunMenu({ project, ids, label, workFolder, why, onGo, sources, a
           </div>}
           {shown("animate_rife") && <AnimateForm sources={sources} src={src} stages={ids.length} why={why} batchHint={batchHint} onPickSource={setPick} onRun={runIt}
             onKeyframes={onKeyframes && ((f) => { setOpen(false); onKeyframes(f); })} />}
-          {shown("interpolate") && <div className="aform">
-            <button className="afgo interp" disabled={!!why("interpolate")} title={why("interpolate") || ACTIONS.interpolate.tip}
-              onClick={() => runIt("interpolate", clipFrom ?? workFolder)}>
-              <span className="afgo-main">Interpolate</span>
-              <span className="afgo-play">▶</span>
-              <span className="afgo-sub">48 fps · 🖥</span>
-            </button>
-          </div>}
         </div>
       )}
     </span>
@@ -747,7 +738,7 @@ export default function Board({ name }: { readonly name: string }) {
           <button className={`btn ${allSelDone ? "donebtn" : ""}`} disabled={!sel.size}
             title={bulkDoneTip(sel.size, allSelDone, folder)}
             onClick={() => { void markDone(selected, !allSelDone); clearIfSelection(selected); }}>✓</button>
-          <RunMenu project={name} ids={runIds} label="Run" workFolder={folder} allow={isUpscaleStep(phase) ? allowFor(folder) : undefined} sources={animSources(p, runIds)} why={(a) => disabledWhy(a, runIds)} onGo={(a, f) => void go(a, runIds, f === undefined ? {} : { folder: f })} clipFrom={animFolder}
+          <RunMenu project={name} ids={runIds} label="Run" workFolder={folder} allow={isUpscaleStep(phase) ? allowFor(folder) : undefined} sources={animSources(p, runIds)} why={(a) => disabledWhy(a, runIds)} onGo={(a, f) => void go(a, runIds, f === undefined ? {} : { folder: f })}
             onKeyframes={sel.size > 1 ? (f) => void keyframeClip(f) : undefined} />
           <button className="btn" title="add a stage" onClick={() => void api(`/projects/${name}/stages`, "POST").then(() => proj.refetch())}>＋</button>
         </div>
@@ -1036,7 +1027,7 @@ function StageRow({ p, s, seen, onSeen, folder, clipFrom, phase, doneKey, cur, o
         <span className="spacer" />
         <button className={`btn sm ${done ? "donebtn" : ""}`} title={doneTip(done, review, doneKey)} onClick={onDone}>✓</button>
 
-        <RunMenu project={p.name} ids={[s.id]} label="Run" workFolder={folder} allow={isUpscaleStep(phase) ? allowFor(folder) : undefined} why={disabledWhy} onGo={onGo} sources={animSources(p, [s.id])} clipFrom={clipFrom} />
+        <RunMenu project={p.name} ids={[s.id]} label="Run" workFolder={folder} allow={isUpscaleStep(phase) ? allowFor(folder) : undefined} why={disabledWhy} onGo={onGo} sources={animSources(p, [s.id])} />
         <MoreMenu p={p} s={s} nOthers={others.length} onEdit={onEdit} onVersions={() => setVersions(true)} onClearTakes={onClearTakes} />
       </div>
       <div className="slots">
