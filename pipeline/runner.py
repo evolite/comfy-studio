@@ -152,12 +152,13 @@ def _wrap_up(step, ctx, out, numbers, got, takes, dropped=()) -> list:
     """Run the step's after-hook and print the summary; returns the failed stage numbers (a stage cancelled on its own,
     `dropped`, isn't one)."""
     failed = [n for n in numbers if not got[n] and n not in dropped]
-    ok = [n for n in numbers if n not in failed]
+    ok = [n for n in numbers if got[n]]
     if step.after:
         step.after(ctx, ok, out)
     if takes > 1:
         print("\n" + ", ".join(f"stage {n}: {got[n]}/{takes} takes" for n in numbers))
-    print(f"\n{len(ok)}/{len(numbers)} stages succeeded in {out}" + (f"; failed: {sorted(failed)} (rerun to retry)" if failed else ""))
+    print(f"\n{len(ok)}/{len(numbers)} stages succeeded in {out}" + (f"; failed: {sorted(failed)} (rerun to retry)" if failed else "")
+          + (f"; cancelled: {sorted(set(dropped))}" if dropped else ""))
     return failed
 
 
