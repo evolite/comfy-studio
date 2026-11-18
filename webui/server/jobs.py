@@ -137,7 +137,7 @@ class Job:
     @classmethod
     def from_data(cls, d: dict) -> "Job":
         j = cls.__new__(cls)
-        j.lines, j.proc = [], None
+        j.lines, j.proc, j.stage_prompts = [], None, {}  # fields a row stored before they existed start empty
         j.last, j.pid, j.prompt_ids, j.attempt, j.retry_at, j.mem_freed, j.frames, j.log_offset = "", None, [], 1, None, None, None, 0
         for k in cls.STORED:
             if k in d:
