@@ -19,7 +19,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # repo root: config.py
 import config  # noqa: E402
 import lora_registry  # noqa: E402
-import timings  # noqa: E402
+import timings
+import events  # noqa: E402
 from stagegraph import stage_graph  # noqa: E402
 
 from .base import StageJob, Target  # noqa: E402
@@ -192,6 +193,7 @@ class CloudTarget(Target):
         (job.debug_dir / "submit_response.json").write_text(json.dumps(resp, indent=2))
         eta = timings.expected(timings.sig(job.graph), False)
         print(f"  [{job.debug_dir.name}] submitted -> {prompt_id}" + (f" expected {eta:.0f}s" if eta else ""), flush=True)
+        events.stage(job.debug_dir.name, "submitted", prompt_id=prompt_id, expected=round(eta) if eta else None)
         job.handle = {"id": prompt_id, "state": "submitted", "restarts": 0, "t0": time.time()}
 
     def _finish(self, job: StageJob) -> None:

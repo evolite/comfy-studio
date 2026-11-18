@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import events  # noqa: E402
 import history  # noqa: E402
 import image_loras  # noqa: E402
 import takes as takes_mod  # noqa: E402
@@ -73,6 +74,7 @@ def _collect_one(ctx, step, needs, out, j, got, target_name: str) -> None:
     """Save one finished job — as a take, or over the stage file with its history entry; a failure just logs."""
     if not j.final:
         print(f"  [{j.tag}] FAILED: {j.error}", flush=True)
+        events.stage(j.tag, "failed", error=str(j.error))
         return
     dest = out / f"stage_{j.n}.png"
     if step.takes:
@@ -86,6 +88,7 @@ def _collect_one(ctx, step, needs, out, j, got, target_name: str) -> None:
         _note_source(ctx, step, needs, j.n, out)
     got[j.n] += 1
     print(f"  [{j.tag}] done (waited {j.waited:.0f}s" + (f", processed {j.seconds:.0f}s" if j.seconds else "") + f") -> {dest}", flush=True)
+    events.stage(j.tag, "done", processed=round(j.seconds) if j.seconds else None)
 
 
 def _wrap_up(step, ctx, out, numbers, got, takes) -> list:

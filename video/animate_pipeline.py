@@ -30,6 +30,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "pipeline"))
 import comfy_api as api
 import config
+import events
 import interpolate
 import lora_registry
 import runpod_pod
@@ -304,6 +305,7 @@ def _recover_one(pipeline_dir: Path, rec: dict) -> bool:
     True when it failed or was lost (the old clip stays in Previous versions)."""
     n, pid, server = rec["stage"], rec["prompt_id"], rec.get("server")
     print(f"[stage_{n}] recovering {'job on ' + server if server else 'cloud job'} {pid}", flush=True)
+    events.stage(n, "running", prompt_id=pid)
     if server:
         try:
             while (st := server_job(server, pid))[0] == "running":
@@ -321,6 +323,7 @@ def _recover_one(pipeline_dir: Path, rec: dict) -> bool:
         return False
     where = f"the pod {server}" if server else "the cloud"
     print(f"[stage_{n}] failed or lost on {where} ({state}), nothing to save -- animate the stage again", flush=True)
+    events.stage(n, "failed", error=f"{state} on {where}")
     return True
 
 
@@ -350,6 +353,7 @@ def save_clip(job: dict, stage_num: int, pipeline_dir: Path, loras: dict, seed: 
     out_path = pipeline_dir / "videos" / f"stage_{stage_num}.mp4"
     out_path.write_bytes(main.read_bytes())
     print(f"[stage_{stage_num}] -> {out_path}", flush=True)
+    events.stage(stage_num, "done")
     if rife_dir:
         if RIFE_SAVE not in clips:
             print(f"[stage_{stage_num}] WARNING: no RIFE clip among the outputs", flush=True)
@@ -383,12 +387,15 @@ def _render_record(args, png: Path, prompts, durations, stage_loras, stage_seeds
     key = str(stage_num)
     if (videos_dir / f"stage_{stage_num}.mp4").exists():
         print(f"[stage_{stage_num}] already exists, skipping", flush=True)
+        events.stage(stage_num, "skipped")
         return None
     if key not in prompts or key not in durations:
         print(f"[stage_{stage_num}] no motion prompt/duration entry, skipping", flush=True)
+        events.stage(stage_num, "skipped")
         return None
     duration_value = durations[key]["duration_value"]
     engine = stage_engines.get(key, DEFAULT_ENGINE)
+    events.stage(stage_num, "running")
     print(f"[stage_{stage_num}] uploading {png.name} ({engine}, duration={duration_value}s, tier={durations[key]['tier_frames']}f)", flush=True)
     loras = stage_loras.get(key, {})
     seed = stage_seeds.get(key)
@@ -452,6 +459,7 @@ def _finish_render(args, server, prompt_id: str, job, state, r, failed: list, su
         submit(r)
     else:
         print(f"  [stage_{r['stage']}] failed after {MAX_ATTEMPTS} attempts (state '{state}')", flush=True)
+        events.stage(r["stage"], "failed", error=f"{state} after {MAX_ATTEMPTS} attempts")
         failed.append(r["stage"])
         drop_pending(args.pipeline_dir, r["stage"])
 
@@ -464,6 +472,7 @@ def _submitter(args, server, pending: dict):
         write_pending(args.pipeline_dir, r, prompt_id, args.rife_dir, server)
         eta = timings.expected(timings.sig(r["graph"]), False)
         print(f"  [stage_{r['stage']}] submitted -> {prompt_id} (attempt {r['attempts']})" + (f" expected {eta:.0f}s" if eta else ""), flush=True)
+        events.stage(r["stage"], "submitted", prompt_id=prompt_id, expected=round(eta) if eta else None)
         pending[prompt_id] = r
     return submit
 

@@ -16,7 +16,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # repo root: config.py
 import config  # noqa: E402
-import timings  # noqa: E402
+import timings
+import events  # noqa: E402
 
 from .base import StageJob, Target, TargetUnavailable  # noqa: E402
 from .models import local_lora, local_models  # noqa: E402
@@ -91,6 +92,7 @@ def free_if_changed(server: str, graph: dict) -> bool:
         if not why:
             return False
         print(f"  same models as the last run, but {why} -- freeing memory first", flush=True)
+        events.note("memfree", reason=why)
     free(server)
     return True
 
@@ -290,6 +292,7 @@ class LocalTarget(Target):
             raise self._unreachable(e)
         eta = timings.expected(timings.sig(job.graph), job.cold)
         print(f"  [{job.debug_dir.name}] queued" + (f" expected {eta:.0f}s" if eta else ""), flush=True)
+        events.stage(job.debug_dir.name, "queued", prompt_id=job.handle, expected=round(eta) if eta else None)
 
     def collect(self, jobs: list):
         """ComfyUI runs its queue in order, so wait for the jobs in order."""

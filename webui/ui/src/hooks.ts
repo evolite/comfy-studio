@@ -12,25 +12,38 @@ export const useRunpodBalance = (on: boolean) =>
   useQuery({ queryKey: ["runpod-balance"], queryFn: () => api<RunpodBalance>("/runpod/balance"), enabled: on, refetchInterval: 60000, staleTime: 20000 });
 export const useCredits = () => useQuery({ queryKey: ["credits"], queryFn: () => api<Credits>("/credits"), refetchInterval: 60000, staleTime: 20000 });
 export const useHealth = () => useQuery({ queryKey: ["health"], queryFn: () => api<Health>("/health"), refetchInterval: 10000 });
-/** While a job is queued/running for this project, re-read it every 3s so new stills/clips appear as each one lands. */
+/** Fallback refetch while the live stream is down (it reconnects by itself); normally useLiveUpdates refreshes on change. */
+const FALLBACK = 30000;
+
+/** A project: refreshed by the server's live updates whenever one of its files changes (useLiveUpdates). */
 export function useProject(name: string) {
+  return useQuery({ queryKey: ["project", name], queryFn: () => api<Project>(`/projects/${name}`), refetchInterval: FALLBACK });
+}
+
+/** The server's live updates (/api/events, webui/server/live.py): each message names what changed, and only that query is
+ * refreshed: jobs (also every 2 s while one runs, for its progress bar), the "Start batch" queue, a project's files, the list. */
+export function useLiveUpdates() {
   const qc = useQueryClient();
-  return useQuery({
-    queryKey: ["project", name], queryFn: () => api<Project>(`/projects/${name}`),
-    refetchInterval: () => ((qc.getQueryData<Job[]>(["jobs"]) ?? []).some((j) => j.project === name && ["queued", "running"].includes(j.status)) ? 3000 : false),
-  });
+  useEffect(() => {
+    const es = new EventSource("/api/events");
+    es.onmessage = (m) => {
+      const e = JSON.parse(m.data) as { type: string; name?: string };
+      if (e.type === "jobs") void qc.invalidateQueries({ queryKey: ["jobs"] });
+      else if (e.type === "batch") void qc.invalidateQueries({ queryKey: ["animate-batch"] });
+      else if (e.type === "project" && e.name) void qc.invalidateQueries({ queryKey: ["project", e.name] });
+      else if (e.type === "projects") void qc.invalidateQueries({ queryKey: ["projects"] });
+    };
+    return () => es.close();
+  }, [qc]);
 }
 
 export function useJobs() {
   const qc = useQueryClient();
   const q = useQuery({
-    queryKey: ["jobs"], queryFn: () => api<Job[]>("/jobs"),
-    refetchInterval: (query) => ((query.state.data ?? []).some((j) => j.status === "running" || j.status === "queued") ? 1200 : 5000),
+    queryKey: ["jobs"], queryFn: () => api<Job[]>("/jobs"), refetchInterval: FALLBACK,  // live: useLiveUpdates
   });
-  // a job that appears or changes status refreshes its project: on the way out so its results show, on the way in so useProject's
-  // 3 s polling (decided after each fetch, so it stays off once a fetch found nothing running) starts for jobs submitted elsewhere
-  // (auto-retries, the API, another tab)
-  // (also on first sight: the board's first fetch may come before the job list); only the open board's query actually refetches
+  // a job that appears or changes status refreshes its project too (the file watcher already does when results land; this
+  // also covers stage status shown from the job, e.g. a failure); only the open board's query actually refetches
   const seen = useRef<Record<string, string>>({});
   useEffect(() => {
     for (const j of q.data ?? []) {
@@ -61,7 +74,7 @@ export function useAnimateBatch() {
   return useQuery({
     queryKey: ["animate-batch"],
     queryFn: () => api<{ size: number; pending: BatchEntry[] }>("/animate-batch"),
-    refetchInterval: 4000,
+    refetchInterval: FALLBACK,  // live: useLiveUpdates
   });
 }
 

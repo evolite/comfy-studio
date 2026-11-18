@@ -2,7 +2,7 @@ import SettingsButton from "./AppSettings";
 import { ReactNode, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, api, fileUrl, ProjectRow, useHash } from "./api";
-import { useAnimateBatch, useAnimateTarget, useCredits, useHealth, useJobs, useProject, useRunpodBalance, useUnseen } from "./hooks";
+import { useAnimateBatch, useAnimateTarget, useCredits, useHealth, useJobs, useLiveUpdates, useProject, useRunpodBalance, useUnseen } from "./hooks";
 import Projects from "./Projects";
 import Board from "./Board";
 import OneOff from "./OneOff";
@@ -349,6 +349,7 @@ function ApiErrorToast() {
 }
 
 export default function App() {
+  useLiveUpdates();
   const hash = useHash();
   const qc = useQueryClient();
   const [showJobs, setShowJobs] = useState(false);

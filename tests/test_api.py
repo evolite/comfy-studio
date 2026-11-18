@@ -97,8 +97,19 @@ def test_job_flags_a_memory_check_free():
     j = Job("j1", "p", "preview_local", ["py", "project.py"], {})
     j.emit("  same models as the last run -- keeping them loaded")
     assert j.info()["mem_freed"] is None
-    j.emit("  same models as the last run, but swap 52% used -- freeing memory first")
-    assert j.info()["mem_freed"] == "swap 52% used"
+    j.emit('::event {"note": "memfree", "reason": "swap 52% used"}')
+    assert j.info()["mem_freed"] == "swap 52% used" and j.info()["last"].startswith("  same models")  # events aren't shown
+
+
+def test_job_state_comes_from_event_lines():
+    from jobs import Job
+    j = Job("j1", "p", "animate", ["py", "project.py", "animate", "--target", "cloud"], {})
+    j.emit('::event {"stage": "3", "status": "skipped"}')
+    j.emit('::event {"stage": "1", "status": "submitted", "prompt_id": "abc", "expected": 40}')
+    j.emit("  [stage_1] FAILED looking text without an event changes nothing")
+    j.emit('::event {"stage": "2", "status": "queued"}')
+    j.emit('::event {"stage": "1", "status": "done", "processed": 31}')
+    assert j.stage_status == {"1": "done", "2": "queued"} and j.cloud_ids == ["abc"] and j.took["1"] == 31 and j.eta["1"] == 40
 
 
 def test_stale_clips_flag_clips_older_than_their_source():

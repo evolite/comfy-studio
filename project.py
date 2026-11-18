@@ -79,6 +79,7 @@ import config  # noqa: E402
 sys.path.insert(0, str(ROOT / "pipeline"))
 sys.path.insert(0, str(ROOT / "video"))
 import animate_pipeline
+import events
 import interpolate
 import lora_registry
 import voice_registry
@@ -507,11 +508,13 @@ def _interpolate_one(a, d, src, vids, dest, tmp, n) -> bool:
         secs = interpolate.interpolate(vids / f"stage_{n}.mp4", out, a.server, f"{a.name} stage {n} interpolate")
     except TimeoutError as e:
         print(f"  [stage_{n}] FAILED: {e}", flush=True)
+        events.stage(n, "failed", error=str(e))
         return False
     except OSError as e:
         sys.exit(f"can't reach the local ComfyUI at {a.server} ({e}) -- start it, or pass --server")
     except RuntimeError as e:
         print(f"  [stage_{n}] FAILED: {e}", flush=True)
+        events.stage(n, "failed", error=str(e))
         return False
     dest.mkdir(parents=True, exist_ok=True)
     history.archive(d, dest / f"stage_{n}.mp4")
@@ -519,6 +522,7 @@ def _interpolate_one(a, d, src, vids, dest, tmp, n) -> bool:
     (dest.parent / "_debug" / f"stage_{n}").mkdir(parents=True, exist_ok=True)
     save(dest.parent / "_debug" / f"stage_{n}" / "source.json", {"folder": src.name if src != d else ""})
     print(f"  [stage_{n}] done (waited {time.time() - t0:.0f}s" + (f", processed {secs:.0f}s" if secs else "") + f") -> {dest / f'stage_{n}.mp4'}", flush=True)
+    events.stage(n, "done", processed=round(secs) if secs else None)
     return True
 
 

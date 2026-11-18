@@ -84,7 +84,9 @@ import numpy as np
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))  # repo root: config.py
+sys.path.insert(0, str(HERE.parent / "pipeline"))
 import config  # noqa: E402
+import events  # noqa: E402
 import polaroid  # noqa: E402  # video/, beside this file
 FPS = 30  # the edit's frame rate; make_edit() raises it to HI_FPS when every clip is interpolated (edit_fps)
 HI_FPS = 48  # RIFE x2 of the 24 fps i2v clips (video/interpolate.py): render at their own rate, no frame dropping
@@ -859,6 +861,7 @@ def make_edit(pipeline_dir, out_name=None, audio=None, beat_times_file=DEFAULT_B
           f"punch-in {f'{zoom}x' if zoom else 'off'}, music from {audio_start:.2f}s, first cut at {punch_start:.2f}s, "
           f"{f'{len(prefix)} stages in full before the music ({prefix_frames / FPS:.2f}s), ' if prefix else ''}"
           f"total {total_frames} frames / {total_frames / FPS:.3f}s at {FPS} fps, {WIDTH}x{HEIGHT}", flush=True)
+    events.note("frames", n=total_frames)
 
     build_dir = pipeline_dir / "_debug" / "edit_build_beatsync"
     shutil.rmtree(build_dir, ignore_errors=True)  # no stale cuts from a previous layout
@@ -1009,6 +1012,7 @@ def make_scenario(pipeline_dir, out_name=None, stills=False, order=None, transit
     print(f"{pipeline_dir.name}: {len(clips)} stages, "
           f"{f'music {audio.name} from {song_start:.2f}s at stage {clips[at].stem}' if track else 'no music'}, transition {transition} {t_frames / FPS:.2f}s, "
           f"fade in {fade_in}s / out {opts.fade_out}s, total {total_frames} frames / {total_frames / FPS:.3f}s at {FPS} fps", flush=True)
+    events.note("frames", n=total_frames)
 
     build_dir = pipeline_dir / "_debug" / "edit_build_scenario"
     shutil.rmtree(build_dir, ignore_errors=True)

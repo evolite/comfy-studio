@@ -19,6 +19,7 @@ import voices
 import projects as P
 import config
 import jobs
+import live
 from jobs import ACTIONS, edit_timing, manager
 import run_pipeline  # noqa: E402  # pipeline/ is on sys.path via projects
 import civitai_meta  # noqa: E402
@@ -733,6 +734,13 @@ def app_settings_test_push():
     return {"ok": True}
 
 
+@app.get("/api/events")
+async def live_events(request: Request):
+    """SSE: what changed (jobs, the batch queue, a project's files), so the UI refreshes it instead of polling (live.py)."""
+    return StreamingResponse(live.stream(request, manager), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
 @app.get("/api/jobs/{jid}")
 def job_get(jid: str):
     j = manager.get(jid)
@@ -763,7 +771,7 @@ async def job_events(jid: str, request: Request):
         while True:
             j = manager.get(jid)
             lines, offset = jobs.jobstore.read_log(jid, offset)
-            for line in lines:
+            for line in (x for x in lines if not x.startswith(jobs.EVENT)):  # event lines are state, not text
                 yield f"data: {json.dumps({'i': i, 'line': line, 'stages': j.stage_status, 'status': j.status})}\n\n"
                 i += 1
             if j.status in ("done", "failed", "cancelled") and not lines:

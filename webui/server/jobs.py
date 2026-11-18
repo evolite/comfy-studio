@@ -32,7 +32,6 @@ import steps  # noqa: E402
 
 # how long the last edit of each kind took (edits of a kind are all about the same size) -> estimate + progress bar for the next one
 EDIT_TIMING = config.LOGS_DIR / "edit_timing.json"
-FRAMES_RE = re.compile(r"total (\d+) frames")  # make_edit's plan line; scales the estimate when the edit is longer/shorter than the last
 EDIT_KINDS = ("beat", "nomusic")
 RETRY_AFTER, RETRY_TIMES = 30 * 60, 16  # seconds; 16 x 30 min = a night
 
@@ -90,11 +89,7 @@ ACTIONS = {
     "recover": (["recover"], "free", "free"),  # save cloud clips an interrupted animate run left behind (started by the server itself)
 }
 ANIMATE = ("animate", "animate_rife")  # build_argv pins their --target (the ⚙ setting at submit time); runpod ones run in the runpod lane
-STAGE_RE = re.compile(r"\s*\[stage_(\d+(?:\.t\d+)?)\]\s*(.*)")  # stage_N, or stage_N.tK for one of K preview takes
-EXPECTED_RE = re.compile(r"expected (\d+)s")  # `[stage_N] queued (krea2) expected 31s`: the baseline in logs/timings.json
-PROCESSED_RE = re.compile(r"processed (\d+)s")  # `[stage_N] done (waited 40s, processed 31s)`: ComfyUI's own execution time
-MEMFREE_RE = re.compile(r"same models as the last run, but (.+) -- freeing memory first")  # targets/local.py: memory check fired at batch start
-CLOUD_ID_RE = re.compile(r"submitted -> ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})")
+EVENT = "::event "  # pipeline/events.py PREFIX: a machine-readable progress line (stage status, timings, prompt ids)
 LOCAL_DEFAULT = config.LOCAL_COMFY_URL
 EDIT_FLAGS = {"audio": "--audio", "beat_times_file": "--beat-times-file", "start_time": "--start-time",
               "lead_in_seconds": "--lead-in-seconds", "subcuts_per_image": "--subcuts-per-image",
@@ -151,7 +146,8 @@ class Job:
         return j
 
     def log_lines(self) -> list:
-        return self.lines or jobstore.read_log(self.id)[0]
+        """The job's shown lines (its `::event` lines are state, not text)."""
+        return self.lines or [x for x in jobstore.read_log(self.id)[0] if not x.startswith(EVENT)]
 
     def key(self):
         r = self.req
@@ -205,45 +201,38 @@ class Job:
         return {"fraction": min((done_t + elapsed) / total, 1) if total else 1, "left": max(remaining - elapsed, 0), "exact": exact}
 
     def emit(self, line):
-        """One log line (the daemon calls it for each line it reads from the job's log), parsed into the job's state."""
+        """One log line (the daemon calls it for each line it reads from the job's log): an `::event` line
+        (pipeline/events.py) updates the job's state, any other is shown."""
+        if line.startswith(EVENT):
+            try:
+                self._event(json.loads(line[len(EVENT):]))
+            except (ValueError, TypeError, KeyError):
+                pass
+            return
         self.lines.append(line)
         self.last = line
-        if self.action == "edit":
-            f = FRAMES_RE.search(line)
-            if f:
-                self.frames = int(f.group(1))
-        f = MEMFREE_RE.search(line)
-        if f:
-            self.mem_freed = f.group(1)
-        c = CLOUD_ID_RE.search(line)
-        if c:
-            self.cloud_ids.append(c.group(1))
-        self._stage_line(line)
 
-    def _stage_line(self, line):
-        """A `[stage_N] ...` line: its new status and whatever timing data it carries."""
-        m = STAGE_RE.match(line)
-        if not m:
-            return
-        s = m.group(2).lower()
-        if "skipping" in s:  # a stage the run leaves alone ("already exists, skipping"): not part of this job
-            return
-        if "failed" in s:
-            st = "failed"
-        elif s.startswith(("done", "->")):
-            st = "done"  # the cloud prints `-> path` when a result is saved
-        elif s.startswith("queued"):
-            st = "queued"
-        else:
-            st = "running"
-        self.stage_status[m.group(1)] = st
-        e, t = EXPECTED_RE.search(line), PROCESSED_RE.search(line)
-        if e:
-            self.eta[m.group(1)] = int(e.group(1))
+    def _event(self, e: dict):
+        if e.get("note") == "memfree":
+            self.mem_freed = e.get("reason")
+        elif e.get("note") == "frames":
+            self.frames = int(e["n"])
+        elif e.get("stage") is not None and e.get("status") != "skipped":  # a skipped stage isn't part of this job
+            self._stage_event(str(e["stage"]), e)
+
+    def _stage_event(self, sid, e):
+        """A stage's new status and whatever timing data it carries; `submitted` (to Comfy Cloud or the pod) is running,
+        and its prompt id is kept so a cancel can pull it off that queue."""
+        st = {"submitted": "running"}.get(e["status"], e["status"])
+        if e["status"] == "submitted" and e.get("prompt_id"):
+            self.cloud_ids.append(e["prompt_id"])
+        self.stage_status[sid] = st
+        if e.get("expected"):
+            self.eta[sid] = int(e["expected"])
         if st in ("queued", "running") and self.cursor is None:
             self.cursor = time.time()
         if st in ("done", "failed"):
-            self.took[m.group(1)] = int(t.group(1)) if t else self.eta.get(m.group(1)) or time.time() - (self.cursor or time.time())
+            self.took[sid] = int(e["processed"]) if e.get("processed") else self.eta.get(sid) or time.time() - (self.cursor or time.time())
             self.cursor = self.last_done = time.time()
 
 
@@ -254,6 +243,7 @@ class Manager:
     def __init__(self):
         self.lock = threading.Lock()
         self.animate_batch = {}  # (project, action, folder) -> {"stages": [ids], "added": ts}: armed "Start batch" clicks, sent as one job
+        self.batch_rev = 0  # bumped on every change of animate_batch (live.py tells open pages)
 
     @staticmethod
     def get(jid):
@@ -462,6 +452,7 @@ class Manager:
         with self.lock:
             entry = self.animate_batch.setdefault(key, {"stages": [], "added": time.time()})
             entry["stages"] = [*dict.fromkeys([*entry["stages"], *stages])]  # keep order, drop repeats
+            self.batch_rev += 1
             total = sum(len(e["stages"]) for e in self.animate_batch.values())
         size = config.animate_batch_size()
         if total < size:
@@ -485,6 +476,7 @@ class Manager:
             with self.lock:
                 if self.animate_batch.get(key, {}).get("stages") == stages:
                     del self.animate_batch[key]  # unchanged since the snapshot: the whole batch went out
+                    self.batch_rev += 1
         if errors:
             raise ApiError("; ".join(errors), 400)
         return {"sent": sent, "pending": self.batch_state()}
@@ -492,6 +484,7 @@ class Manager:
     def clear_batch(self):
         with self.lock:
             self.animate_batch.clear()
+            self.batch_rev += 1
 
     def batch_state(self):
         with self.lock:

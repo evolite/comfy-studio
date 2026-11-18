@@ -35,6 +35,10 @@ def conn() -> sqlite3.Connection:
                   " lane TEXT NOT NULL, project TEXT NOT NULL, retry_at REAL, cancel INTEGER NOT NULL DEFAULT 0, data TEXT NOT NULL)")
         c.execute("CREATE INDEX IF NOT EXISTS jobs_status ON jobs (status)")
         c.execute("CREATE TABLE IF NOT EXISTS settings (k TEXT PRIMARY KEY, v TEXT)")
+        try:  # when the row last changed: version() is what the web UI's live updates watch
+            c.execute("ALTER TABLE jobs ADD COLUMN updated REAL NOT NULL DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass  # already there
         _local.c, _local.path = c, DB
     return c
 
@@ -70,8 +74,8 @@ def insert(data: dict) -> dict:
         seq = (c.execute("SELECT COALESCE(MAX(seq), 0) FROM jobs").fetchone()[0]) + 1
         jid = f"j{seq}"
         data = {**data, "id": jid}
-        c.execute("INSERT INTO jobs (seq, id, status, lane, project, retry_at, cancel, data) VALUES (?, ?, ?, ?, ?, NULL, 0, ?)",
-                  (seq, jid, data.get("status", "queued"), data["lane"], data["project"], json.dumps(data)))
+        c.execute("INSERT INTO jobs (seq, id, status, lane, project, retry_at, cancel, data, updated) VALUES (?, ?, ?, ?, ?, NULL, 0, ?, ?)",
+                  (seq, jid, data.get("status", "queued"), data["lane"], data["project"], json.dumps(data), time.time()))
         c.execute("COMMIT")
     except BaseException:
         c.execute("ROLLBACK")
@@ -82,7 +86,7 @@ def insert(data: dict) -> dict:
 def save(data: dict) -> None:
     """The daemon's write of a job it owns: state + status (retry_at and cancel stay the other side's)."""
     keep = {k: v for k, v in data.items() if k not in ("seq", "retry_at", "cancel")}
-    conn().execute("UPDATE jobs SET status = ?, data = ? WHERE id = ?", (data["status"], json.dumps(keep), data["id"]))
+    conn().execute("UPDATE jobs SET status = ?, data = ?, updated = ? WHERE id = ?", (data["status"], json.dumps(keep), time.time(), data["id"]))
 
 
 def get(jid: str) -> dict | None:
@@ -103,24 +107,30 @@ def by_status(*statuses) -> list:
 
 def claim(jid: str) -> bool:
     """queued -> running, only if nobody cancelled it first."""
-    return conn().execute("UPDATE jobs SET status = 'running' WHERE id = ? AND status = 'queued'", (jid,)).rowcount == 1
+    return conn().execute("UPDATE jobs SET status = 'running', updated = ? WHERE id = ? AND status = 'queued'", (time.time(), jid)).rowcount == 1
 
 
 def cancel_queued(jid: str) -> bool:
-    return conn().execute("UPDATE jobs SET status = 'cancelled' WHERE id = ? AND status = 'queued'", (jid,)).rowcount == 1
+    return conn().execute("UPDATE jobs SET status = 'cancelled', updated = ? WHERE id = ? AND status = 'queued'", (time.time(), jid)).rowcount == 1
 
 
 def request_cancel(jid: str) -> None:
-    conn().execute("UPDATE jobs SET cancel = 1 WHERE id = ?", (jid,))
+    conn().execute("UPDATE jobs SET cancel = 1, updated = ? WHERE id = ?", (time.time(), jid))
 
 
 def set_retry(jid: str, at: float | None) -> None:
-    conn().execute("UPDATE jobs SET retry_at = ? WHERE id = ?", (at, jid))
+    conn().execute("UPDATE jobs SET retry_at = ?, updated = ? WHERE id = ?", (at, time.time(), jid))
 
 
 def take_retry(jid: str) -> bool:
     """Clear a pending auto-retry; True when this call is the one that cleared it (so a retry happens once)."""
-    return conn().execute("UPDATE jobs SET retry_at = NULL WHERE id = ? AND retry_at IS NOT NULL", (jid,)).rowcount == 1
+    return conn().execute("UPDATE jobs SET retry_at = NULL, updated = ? WHERE id = ? AND retry_at IS NOT NULL", (time.time(), jid)).rowcount == 1
+
+
+def version() -> tuple:
+    """(when any job last changed, how many are queued or running): the live updates send "jobs" when it moves."""
+    r = conn().execute("SELECT COALESCE(MAX(updated), 0), SUM(status IN ('queued', 'running')) FROM jobs").fetchone()
+    return r[0], r[1] or 0
 
 
 def due_retries(now: float | None = None) -> list:

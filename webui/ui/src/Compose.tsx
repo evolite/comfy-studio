@@ -583,7 +583,6 @@ export default function Compose({ name }: { readonly name: string }) {
   const voiceClip = firstVoiced && { url: fileUrl(name, clipFolder(firstVoiced.id), "clip", firstVoiced.id, fs!.clips[firstVoiced.id]), trim: 0 };
   const render = () => {
     run.mutate(editRequest({ folder, mode, items, isClip, sfolder, zoom, musicOn, beatSync, muted, music, opts, pol, cfolder }), {
-      onSuccess: () => { const t = setInterval(() => qc.invalidateQueries({ queryKey: ["project", name] }), 3000); setTimeout(() => clearInterval(t), 600000); },
       onError: (e) => setMsg(`error: ${e.message}`),
     });
   };
