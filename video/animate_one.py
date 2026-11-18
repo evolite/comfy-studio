@@ -50,7 +50,7 @@ def main():
 
     image_name = args.image.name if args.dry_run else api.upload_image(args.image)
     template = json.loads(args.template.read_text()) if args.template else ap_.template_for(args.engine)
-    graph = ap_.build_graph(template, image_name, args.motion, args.duration, loras, seed, engine=args.engine)
+    graph = ap_.build_graph(template, image_name, args.motion, args.duration, loras, seed, engine=args.engine, aspect=ap_.aspect_of(args.image))
 
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     run_dir = api.config.ONEOFFS_DIR / (f"{ts}_{args.name}" if args.name else ts)

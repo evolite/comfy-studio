@@ -20,6 +20,7 @@ import json
 import math
 import os
 import secrets
+import struct
 import sys
 import time
 import urllib.error
@@ -141,10 +142,25 @@ def add_rife(graph: dict, engine: str = DEFAULT_ENGINE) -> None:
                                                               "filename_prefix": save["filename_prefix"] + "_rife"}, "_meta": {"title": "Save Video (RIFE)"}}
 
 
+# the ResolutionSelector's aspect ratios (the templates default to 2:3 portrait)
+ASPECTS = ["2:3 (Portrait Photo)", "3:4 (Portrait Standard)", "9:16 (Portrait Widescreen)", "1:1 (Square)",
+           "3:2 (Photo)", "4:3 (Standard)", "16:9 (Widescreen)", "21:9 (Ultrawide)"]
+
+
+def aspect_of(png: Path) -> str:
+    """The ResolutionSelector aspect closest to the still's width/height (PNG header), so a landscape still animates landscape."""
+    w, h = struct.unpack(">II", Path(png).read_bytes()[16:24])
+    def ratio(a):
+        x, y = a.split(" ")[0].split(":")
+        return int(x) / int(y)
+    return min(ASPECTS, key=lambda a: abs(math.log(ratio(a) * h / w)))
+
+
 def build_graph(template: dict, image_name: str, prompt: str, duration_value: float,
                 loras: dict | None = None, seed: int | None = None, megapixels: float | None = None, rife: bool = False,
-                engine: str = DEFAULT_ENGINE, audio: bool = False) -> dict:
-    """`template` = template_for(engine, audio). `audio` only matters for an engine that always makes sound (`mute`)."""
+                engine: str = DEFAULT_ENGINE, audio: bool = False, aspect: str | None = None) -> dict:
+    """`template` = template_for(engine, audio). `audio` only matters for an engine that always makes sound (`mute`).
+    `aspect` (aspect_of(still)) sets the clip's aspect ratio; None keeps the template's."""
     e = engine_spec(engine)
     graph = json.loads(json.dumps(template))
     graph[e["image"][0]]["inputs"][e["image"][1]] = image_name
@@ -153,6 +169,8 @@ def build_graph(template: dict, image_name: str, prompt: str, duration_value: fl
     graph[node]["inputs"][field] = duration_value if unit == "seconds" else frames(engine, duration_value)
     if megapixels:
         graph[e["size"]]["inputs"]["megapixels"] = megapixels
+    if aspect:
+        graph[e["size"]]["inputs"]["aspect_ratio"] = aspect
     if loras:
         add_lora_chain(graph, loras, engine)
     if seed is not None:
@@ -338,7 +356,7 @@ def _render_record(args, png: Path, prompts, durations, stage_loras, stage_seeds
     template = custom if custom and engine == DEFAULT_ENGINE and not with_audio else template_for(engine, with_audio)
     image = local.upload(server, png, f"{secrets.token_hex(4)}_{png.name}") if server else api.upload_image(png)  # pod: one inputs/ for every project
     graph = build_graph(template, image, prompts[key], duration_value, loras, seed, args.megapixels,
-                        rife=bool(args.rife_dir), engine=engine, audio=with_audio)
+                        rife=bool(args.rife_dir), engine=engine, audio=with_audio, aspect=aspect_of(png))
     if server and engine == "minimax" and (unet := config.runpod_h3_unet()):
         pod_unet(graph, unet)
     return {"stage": stage_num, "graph": graph, "engine": engine, "loras": loras, "seed": seed, "audio": with_audio,
