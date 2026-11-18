@@ -26,7 +26,7 @@ export const ACTIONS: Record<string, ActionInfo> = {
   finish_local: { label: "Finish (SeedVR)", where: "local", out: "finish/", tip: "Optional SeedVR2 upscale of the upscale result on your local ComfyUI (from the folder you're reviewing, else the ✓'d one, else hires/, else IL/) → finish/stage_N.png" },
   finish: { label: "Finish (SeedVR)", where: "cloud", out: "finish/", tip: "Optional SeedVR2 upscale of the upscale result in the cloud (from the folder you're reviewing, else the ✓'d one, else hires/, else IL/) → finish/stage_N.png" },
   animate: { label: "Animate", where: "cloud", out: "videos/", tip: "Image-to-video from the stills in the chosen folder → <folder>/videos/stage_N.mp4" },
-  animate_rife: { label: "Animate", where: "cloud", out: "interp/videos/", tip: "Image-to-video plus frame smoothing (RIFE ×2) in the same cloud job: the 24 fps clip → <folder>/videos/, the 48 fps clip straight into interp/videos/ (⑤ Interpolate)" },
+  animate_rife: { label: "Animate", where: "cloud", out: "interp/videos/", tip: "Image-to-video plus frame smoothing (RIFE ×2) in the same cloud job: the 24 fps clip → <folder>/videos/, the 48 fps clip straight into interp/videos/ (④ Animate)" },
   interpolate: { label: "Interpolate", where: "local", out: "videos/", tip: "RIFE frame interpolation of the folder's clips on your local ComfyUI: 24 → 48 fps, same length; the source clip stays, a redone result's old one stays under ⋯ › Previous versions" },
   generate: { label: "Full cloud run", where: "cloud", out: "root", tip: "Everything in the cloud (Krea2 + IL + upscale) → stage_N.png in the project root" },
   dry_run: { label: "Dry run", where: "local", out: "—", tip: "Build and validate the graphs only; submits nothing" },
@@ -51,15 +51,16 @@ const PHASES: { id: Phase; n: string; label: string; tip: string }[] = [
   { id: "preview", n: "①", label: "Preview", tip: "Check poses in the Krea2 previews and ✓ the ones that are good" },
   { id: "upscale", n: "②", label: "Upscale", tip: "Compare the IL / latent-upscale results against the preview and ✓ the chosen one" },
   { id: "finish", n: "③", label: "Finish", tip: "Optional: SeedVR on the ✓'d upscale; compare it against the upscale and ✓ it (skip straight to Animate if you don't need it)" },
-  { id: "animate", n: "④", label: "Animate", tip: "Review the clips: ✓ approves, Re-roll renders a new one (← → move, d ✓, r re-roll, space play)" },
-  { id: "interp", n: "⑤", label: "Interpolate", tip: "Optional: RIFE ×2 (24 → 48 fps) of the ✓'d clips into interp/videos/; compare against the source clip and ✓ it (← → move, d ✓, r redo, space play)" },
-  { id: "cut", n: "⑥", label: "Cut", tip: "Optional: trim each finished clip's start and end — drag the in/out handles (i / o at the playhead, ← → one frame, space play) and Save cut → cut/videos/ (the source clip stays); ✓ the cut" },
+  { id: "interp", n: "④", label: "Animate", tip: "Review the 48 fps clips (interp/videos/) beside the 24 fps clip they came from: ✓ approves, r re-animates from the stills (← → move, d ✓, r re-roll, space play)" },
+  { id: "cut", n: "⑤", label: "Cut", tip: "Optional: trim each finished clip's start and end — drag the in/out handles (i / o at the playhead, ← → one frame, space play) and Save cut → cut/videos/ (the source clip stays); ✓ the cut" },
   { id: "all", n: "", label: "All files", tip: "Every folder's stills and clips at once" },
 ];
 const CIVITAI_FOLDERS = new Set(["preview", "IL", "hires", "finish"]);  // the stills whose generation can be written out for Civitai
 const UP_TARGETS = ["IL", "hires"];  // the upscale results (a finish starts from one of them)
 const CUT = "cut";  // trimmed clips (video/cut_clip.py), made in the Cut phase
-const INTERP = "interp";  // where interpolated clips land (project.py interpolate): a clip-only folder, reviewed in the Interpolate phase
+const INTERP = "interp";  // where the 48 fps clips land (Animate = animate_rife, or project.py interpolate): a clip-only folder, reviewed in the Animate phase
+/** The old ④ Animate phase (24 fps clips) is gone: saved views and job links that name it open ④ Animate (the interp phase). */
+const normPhase = (v: string | null): Phase | null => (v === "animate" ? "interp" : (v as Phase | null));
 const PREVIEW_GATED = new Set(["il_cloud", "local", "face", "face_local", "hires_local", "finish", "finish_local"]);  // steps that build on an approved preview
 /** Which still/clip slots a phase shows for each stage row. */
 function wantSlot(phase: Phase, folder: string, f: string, kind: "still" | "clip", hidden: Set<string>, hideKind: Set<string>, clipFrom: string) {
@@ -127,7 +128,7 @@ function jobPhase(a: string, folder: string): [string, string] {
   if (a === "hires_local") return ["upscale", "hires"];
   if (["local", "il_cloud", "face", "face_local", "local_new"].includes(a)) return ["upscale", "IL"];
   if (a.startsWith("finish")) return ["finish", ""];
-  if (a === "animate") return ["animate", folder];
+  if (a === "animate") return ["interp", folder];
   if (a === "interpolate" || a === "animate_rife") return ["interp", folder];
   return ["all", ""];
 }
@@ -337,7 +338,7 @@ function defaultAnimFolder(folders: string[]): string {
 function firstOpenPhase(st: Stage[]): Phase {
   if (st.some((s) => !doneIn(s, "preview"))) return "preview";
   if (st.some((s) => !UP_TARGETS.some((f) => doneIn(s, f)))) return "upscale";
-  return "animate";
+  return "interp";
 }
 
 type WhyCtx = { p: Project; stages: Stage[]; folder: string; animFolder: string; localDown: boolean };
@@ -464,7 +465,7 @@ export default function Board({ name }: { readonly name: string }) {
   const lastSel = useRef<number | null>(null);
   const [animFolder, setAnimFolder] = useState<string>("");
   const [upTarget, setUpTarget] = useState<string>(() => { const v = localStorage.getItem(`upTarget:${name}`) ?? ""; return UP_TARGETS.includes(v) ? v : "hires"; });
-  const [phase, setPhase] = useState<Phase>(() => (localStorage.getItem(`phase:${name}`) as Phase) || "preview");
+  const [phase, setPhase] = useState<Phase>(() => normPhase(localStorage.getItem(`phase:${name}`)) || "preview");
   const phaseSet = useRef(!!localStorage.getItem(`phase:${name}`));
   const [cur, setCur] = useState<number | null>(null);
   const pickPhase = (v: Phase) => { phaseSet.current = true; setPhase(v); store(`phase:${name}`, v); };
@@ -500,7 +501,7 @@ export default function Board({ name }: { readonly name: string }) {
   useEffect(() => {
     const [path, query] = hash.split("?");
     if (!query) return;
-    const q = new URLSearchParams(query), ph = q.get("phase") as Phase | null, f = q.get("folder");
+    const q = new URLSearchParams(query), ph = normPhase(q.get("phase")), f = q.get("folder");
     if (ph && PHASES.some((x) => x.id === ph)) pickPhase(ph);
     if (ph === "upscale" && f && UP_TARGETS.includes(f)) pickUpTarget(f);
     if ((ph === "animate" || ph === "interp") && f !== null) setAnimFolder(f);
@@ -588,7 +589,7 @@ export default function Board({ name }: { readonly name: string }) {
   const has = (s: Stage, f: string, k: "stills" | "clips") => !!p.folders[f]?.[k][s.id];
   // ...or it already holds this step's output: like Upscale, Finish lists the ✓'d upscales and Animate the ✓'d stills of its folder
   const ready = (s: Stage) => readyFor(s, phase, folder, animFolder, active, has);
-  // Animate smooth lands its result in interp/, so it is tracked in the Interpolate phase, not Animate
+  // Animate (animate_rife) lands its result in interp/, so it is tracked in the ④ Animate phase (phase id "interp")
   const busyIn = (id: number) => phase === "animate" && active[id]?.action === "animate_rife" ? undefined : active[id];
   const notReady = allStages.filter((s) => !ready(s)).length;
   const stages = allStages.filter((s) => ready(s) && (show === "all" || (show === "done") === doneIn(s, doneKey)));
@@ -653,9 +654,8 @@ export default function Board({ name }: { readonly name: string }) {
   // c copies the current stage's ref; clip review keys: ← → move, d approve, r re-roll, space play/pause
   const curId = cur !== null && stages.some((s) => s.id === cur) ? cur : null;
   const redo = (id: number) => {
-    if (phase === "interp") {
-      if (!disabledWhy("interpolate", [id])) void go("interpolate", [id]);
-    } else if (p.folders[folder]?.stills[id] && !disabledWhy("animate_rife", [id])) void go("animate_rife", [id], { folder });
+    const from = phase === "interp" ? animFolder : folder;  // the Animate phase reviews interp/ clips; it re-animates from the stills folder
+    if (p.folders[from]?.stills[id] && !disabledWhy("animate_rife", [id])) void go("animate_rife", [id], { folder: from });
   };
   const stageKey = (e: KeyboardEvent, id: number) => {
     if (e.key === "d") void markDone([id], !doneIn(stageOf(id), doneKey));

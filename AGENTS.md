@@ -75,8 +75,8 @@ seeds and settings used.
 | ② Upscale | `generate [N..] --local` (IL) / `--il` (cloud) / `--hires --local` (SesquiLSR) | `IL/`, `hires/` |
 | (face) | `generate N.. --face [--local]` | replaces `IL/stage_N.png` |
 | ③ Finish | `generate [N..] --finish [--local] [--from hires\|IL]` (SeedVR2, optional) | `finish/` |
-| ④ Animate | `animate [folder] [N..] [--rife] [--target cloud\|runpod]` (paid; `--rife` = Animate + RIFE in the same job) | `<folder>/videos/` (+ `interp/videos/` with `--rife`) |
-| ⑤ Interpolate | `interpolate [folder] [N..]` (RIFE ×2 → 48 fps, local) | `interp/videos/` |
+| ④ Animate | `animate [folder] [N..] [--rife] [--target cloud\|runpod]` (paid; `--rife` = Animate + RIFE in the same job; the web UI always runs `--rife` and reviews `interp/videos/` in its ④ Animate phase) | `<folder>/videos/` (+ `interp/videos/` with `--rife`) |
+| (interpolate) | `interpolate [folder] [N..]` (RIFE ×2 → 48 fps, local: for 24 fps clips made without `--rife`) | `interp/videos/` |
 | ⑥ Edit | `edit [folder] [animate\|stills] [N..] [make_edit args]` | `<folder>/edits/` |
 | ⑦ Civitai | web UI Civitai tab: best still (with Civitai metadata) + clip per picked stage | `data/civitai/<project>_<time>/` |
 
