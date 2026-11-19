@@ -62,17 +62,24 @@ def test_frames_grids():
     assert [ap.frames("ltx", s) for s in (0.5, 1.0, 2.0, 5.0)] == [17, 25, 49, 121]
 
 
-def test_keyframes_chain_one_guide_per_still_in_front_of_the_guider():
+def test_both_templates_give_the_still_to_the_i2v_node_and_differ_only_in_the_soundtrack():
+    audio, plain = (json.loads(p.read_text()) for p in (ap.AUDIO_TEMPLATE, ap.DEFAULT_TEMPLATE))
+    for t in (audio, plain):
+        assert t["105:104"]["inputs"]["first_frame"] == ["114", 0]
+        assert t["105:16"]["inputs"]["conditioning"] == ["105:104", 0] and t["105:14"]["inputs"]["latent_image"] == ["105:104", 1]
+    assert not any(n["class_type"] == "MiniMaxH3AddGuide" for n in audio.values())
+    assert set(audio) - set(plain) == {"105:203", "105:204", "105:205"} and not set(plain) - set(audio)
+
+
+def test_a_last_frame_keyframe_is_the_i2v_last_frame_and_a_middle_one_a_guide():
+    total = ap.frames("minimax", 10.0)
     for path in TEMPLATES:
         t = json.loads(path.read_text())
-        latent = next(n for n in t.values() if n["class_type"] == "SamplerCustomAdvanced")["inputs"]["latent_image"]
-        first = t["105:16"]["inputs"]["conditioning"]
-        g = ap.build_graph(t, "img.png", "P", 5.0, keyframes=[("b.png", 60), ("c.png", -1)])
-        assert g["kf0:load"]["inputs"]["image"] == "b.png" and g["kf1:load"]["inputs"]["image"] == "c.png"
-        assert g["kf0:guide"]["inputs"]["positive"] == first and g["kf1:guide"]["inputs"]["positive"] == ["kf0:guide", 0]
-        assert g["105:16"]["inputs"]["conditioning"] == ["kf1:guide", 0]
-        assert all(g[f"kf{i}:guide"]["inputs"]["latent"] == latent for i in (0, 1))
-        assert [g[f"kf{i}:guide"]["inputs"]["frame_idx"] for i in (0, 1)] == [60, -1]
+        g = ap.build_graph(t, "img.png", "P", 10.0, keyframes=[("mid.png", 84), ("end.png", total - 1)])
+        assert g["kf1:load"]["inputs"]["image"] == "end.png" and g["105:104"]["inputs"]["last_frame"] == ["kf1:load", 0]
+        assert "kf1:guide" not in g
+        assert g["kf0:guide"]["inputs"]["frame_idx"] == 84 and g["kf0:guide"]["inputs"]["positive"] == ["105:104", 0]
+        assert g["kf0:guide"]["inputs"]["latent"] == ["105:104", 1] and g["105:16"]["inputs"]["conditioning"] == ["kf0:guide", 0]
 
 
 def test_keyframe_frames_spread_evenly_and_land_inside_the_clip():

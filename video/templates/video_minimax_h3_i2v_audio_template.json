@@ -106,8 +106,8 @@
         0
       ],
       "latent_image": [
-        "105:200",
-        0
+        "105:104",
+        1
       ]
     },
     "class_type": "SamplerCustomAdvanced",
@@ -122,7 +122,7 @@
         0
       ],
       "conditioning": [
-        "105:202",
+        "105:104",
         0
       ]
     },
@@ -202,6 +202,10 @@
       ],
       "vae": [
         "105:11",
+        0
+      ],
+      "first_frame": [
+        "114",
         0
       ]
     },
@@ -311,73 +315,6 @@
     "class_type": "PrimitiveBoolean",
     "_meta": {
       "title": "Boolean (Enable Lightning LoRA)"
-    }
-  },
-  "105:200": {
-    "class_type": "EmptyMiniMaxH3LatentAV",
-    "inputs": {
-      "width": [
-        "115",
-        0
-      ],
-      "height": [
-        "115",
-        1
-      ],
-      "length": [
-        "105:107",
-        1
-      ]
-    },
-    "_meta": {
-      "title": "Empty AV Latent"
-    }
-  },
-  "105:201": {
-    "class_type": "ImageScale",
-    "inputs": {
-      "image": [
-        "114",
-        0
-      ],
-      "upscale_method": "lanczos",
-      "width": [
-        "115",
-        0
-      ],
-      "height": [
-        "115",
-        1
-      ],
-      "crop": "center"
-    },
-    "_meta": {
-      "title": "Scale first frame"
-    }
-  },
-  "105:202": {
-    "class_type": "MiniMaxH3AddGuide",
-    "inputs": {
-      "positive": [
-        "105:104",
-        0
-      ],
-      "latent": [
-        "105:200",
-        0
-      ],
-      "frame_idx": 0,
-      "vae": [
-        "105:11",
-        0
-      ],
-      "image": [
-        "105:201",
-        0
-      ]
-    },
-    "_meta": {
-      "title": "Anchor first frame"
     }
   },
   "105:203": {

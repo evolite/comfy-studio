@@ -160,7 +160,7 @@ def build_graph(template: dict, image_name: str, prompt: str, duration_value: fl
         for nid in drop:
             graph.pop(nid, None)
     if keyframes:
-        add_keyframes(graph, keyframes, engine)
+        add_keyframes(graph, keyframes, engine, frames(engine, duration_value))
     if rife:
         add_rife(graph, engine)
     return graph
@@ -190,23 +190,27 @@ def keyframe_refs(prompt: str, frames_at: list, fps: int = 24) -> str:
     return f"How the reference pictures align with the target video \u2014 {marks}.\n\n{body}"
 
 
-def add_keyframes(graph: dict, keyframes: list, engine: str = DEFAULT_ENGINE) -> None:
-    """Anchor more stills inside a MiniMax clip: one LoadImage -> ImageScale -> MiniMaxH3AddGuide per (image, frame), chained in
-    front of the guider's conditioning (the node is made to be chained) against the sampler's latent."""
+def add_keyframes(graph: dict, keyframes: list, engine: str = DEFAULT_ENGINE, total: int | None = None) -> None:
+    """More stills in a MiniMax clip. One on the clip's last frame goes into MiniMaxH3ImageToVideo's `last_frame` (H3's own
+    first + last frame task: the text encoder sees it as <Picture 2>); any other is pinned at its frame by a
+    MiniMaxH3AddGuide chained in front of the guider (the latent anchor only)."""
     if engine != "minimax":
         raise SystemExit(f"keyframes need the minimax engine, not {engine!r}")
     e = engine_spec(engine)
+    i2v = graph[e["prompt"][0]]["inputs"]
     guider = graph[e["model_dst"][1]]["inputs"]
     sampler = next(n for n in graph.values() if n["class_type"] == "SamplerCustomAdvanced")["inputs"]
-    vae = graph[e["prompt"][0]]["inputs"]["vae"]
     cond = guider["conditioning"]
     for i, (image, frame) in enumerate(keyframes):
         k = f"kf{i}"
         graph[f"{k}:load"] = {"class_type": "LoadImage", "inputs": {"image": image}}
+        if total is not None and frame in (total - 1, -1):
+            i2v["last_frame"] = [f"{k}:load", 0]
+            continue
         graph[f"{k}:scale"] = {"class_type": "ImageScale", "inputs": {"image": [f"{k}:load", 0], "upscale_method": "lanczos",
                                 "width": [e["size"], 0], "height": [e["size"], 1], "crop": "center"}}
         graph[f"{k}:guide"] = {"class_type": "MiniMaxH3AddGuide", "inputs": {"positive": cond, "latent": sampler["latent_image"],
-                                "frame_idx": frame, "vae": vae, "image": [f"{k}:scale", 0]}}
+                                "frame_idx": frame, "vae": i2v["vae"], "image": [f"{k}:scale", 0]}}
         cond = [f"{k}:guide", 0]
     guider["conditioning"] = cond
 
