@@ -73,7 +73,7 @@ export default function Lightbox({ items, index, onIndex, onClose, onUse, projec
     setPos(Math.min(100, Math.max(0, ((e.clientX - r.left) / r.width) * 100)));
   };
   return (
-    <div className="lightbox" onPointerDown={empty} onClick={closeOnEmpty}>
+    <div className="lightbox" role="presentation" onPointerDown={empty} onClick={closeOnEmpty}>
       <button type="button" className="backdrop" aria-label="close" tabIndex={-1} onClick={onClose} />
       <div className="lb-bar">
         <button className="btn" onClick={() => onIndex(Math.max(0, index - 1))}>←</button>
@@ -103,7 +103,7 @@ export default function Lightbox({ items, index, onIndex, onClose, onUse, projec
         </>}
         {it.take && <button className={`btn ${diff ? "primary" : ""}`} title="what changed between this take and the current one (d)" onClick={() => pickDiff(!diff)}>changes vs current</button>}
       </div>
-      <div className="lb-body" onPointerDown={empty} onClick={closeOnEmpty}>
+      <div className="lb-body" role="presentation" onPointerDown={empty} onClick={closeOnEmpty}>
         {comparing && (
           <div className="lb-cmp" onPointerMove={follow} onPointerDown={follow}>
             <img src={it.src} alt={it.label} draggable={false} />

@@ -253,16 +253,28 @@ def validate_stage(patch, label):
     if bad:
         raise ApiError(f"{label}: unknown fields {sorted(bad)}")
     d = patch.get("duration")
-    if d is not None and ("duration" in patch) and (isinstance(d, bool) or not isinstance(d, (int, float)) or not 1.0 <= d <= 15.0):
+    if d is not None and not (_is_number(d) and 1.0 <= d <= 15.0):
         raise ApiError(f"{label}: duration must be between 1.0 and 15.0 seconds")
     kfs = patch.get("keyframes")
-    if kfs is not None and not (isinstance(kfs, list) and all(
-            isinstance(k, dict) and set(k) <= {"stage", "at"} and isinstance(k.get("stage"), int) and not isinstance(k["stage"], bool)
-            and (k.get("at") is None or (isinstance(k["at"], (int, float)) and not isinstance(k["at"], bool))) for k in kfs)):
+    if kfs is not None and not (isinstance(kfs, list) and all(_keyframe_ok(k) for k in kfs)):
         raise ApiError(f'{label}: keyframes must be a list of {{"stage": N, "at": seconds}} (at optional, negative = from the end)')
     shot = patch.get("shot")
     if shot and not (isinstance(shot, dict) and isinstance(shot.get("cam"), list) and len(shot["cam"]) == 3):
         raise ApiError(f"{label}: shot needs at least \"cam\": [x, y, z] (see `project.py <name> view`)")
+    _check_libraries(patch, label)
+
+
+def _is_number(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def _keyframe_ok(k):
+    """{"stage": N, "at": seconds}, at optional."""
+    return (isinstance(k, dict) and set(k) <= {"stage", "at"} and isinstance(k.get("stage"), int) and not isinstance(k["stage"], bool)
+            and (k.get("at") is None or _is_number(k["at"])))
+
+
+def _check_libraries(patch, label):
     if patch.get("voice") and patch["voice"] not in voice_registry.load()["voices"]:
         raise ApiError(f"{label}: no voice {patch['voice']!r} in the voice library")
     try:
@@ -555,12 +567,21 @@ def cut_info(name, sid):
     return cut_clip.info(project_dir(name), sid) or {}
 
 
-def cut(name, sid, folder, start, end):
-    """Trim <folder>/videos/stage_<sid>.mp4 to [start, end] s into cut/videos/ (video/cut_clip.py)."""
+BAD_FOLDER = "bad folder"
+
+
+def _clip_base(name, folder):
+    """The project dir and <folder> (a top-level folder of the project, not cut/)."""
     d = project_dir(name).resolve()
     base = (d / folder).resolve() if folder else d
     if folder == cut_clip.FOLDER or (base != d and base.parent != d):
-        raise ApiError("bad folder")
+        raise ApiError(BAD_FOLDER)
+    return d, base
+
+
+def cut(name, sid, folder, start, end):
+    """Trim <folder>/videos/stage_<sid>.mp4 to [start, end] s into cut/videos/ (video/cut_clip.py)."""
+    d, base = _clip_base(name, folder)
     src = base / "videos" / f"stage_{sid}.mp4"
     if not src.is_file():
         raise ApiError("no such clip", 404)
@@ -578,10 +599,7 @@ def cut(name, sid, folder, start, end):
 def loop(name, sid, folder, start, end, min_seconds=None):
     """A seamless loop found inside [start, end] s of <folder>/videos/stage_<sid>.mp4, into cut/videos/ (video/loop_clip.py; RIFE on
     the local ComfyUI)."""
-    d = project_dir(name).resolve()
-    base = (d / folder).resolve() if folder else d
-    if folder == cut_clip.FOLDER or (base != d and base.parent != d):
-        raise ApiError("bad folder")
+    d, base = _clip_base(name, folder)
     if not (base / "videos" / f"stage_{sid}.mp4").is_file():
         raise ApiError("no such clip", 404)
     try:
@@ -595,7 +613,7 @@ def loop(name, sid, folder, start, end, min_seconds=None):
         loop_clip.loop(d, sid, folder, start, end, min_seconds)
     except ValueError as e:
         raise ApiError(str(e))
-    except (OSError, ConnectionError) as e:
+    except OSError as e:  # ConnectionError is an OSError
         raise ApiError(f"the local ComfyUI is needed for the RIFE seam: {e}", 503)
     return cut_info(name, sid)
 
@@ -605,7 +623,7 @@ def remove_result(name, sid, folder, kind):
     d = project_dir(name).resolve()
     base = (d / folder).resolve()
     if base != d and base.parent != d:
-        raise ApiError("bad folder")
+        raise ApiError(BAD_FOLDER)
     f = base / ("videos" if kind == "clip" else "") / f"stage_{sid}.{'mp4' if kind == 'clip' else 'png'}"
     if kind not in ("still", "clip") or not f.is_file():
         raise ApiError("no such file", 404)

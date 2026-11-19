@@ -107,6 +107,13 @@ export function pendingTakes(jobs: Job[], project: string): Record<number, numbe
   return out;
 }
 
+/** Stage `id`'s progress tags in job j ("3", or "3.t1".. with takes) that haven't finished yet. */
+function openTags(j: Job, id: number): string[] {
+  const st = j.stages ?? {}, k = jobTakes(j);
+  const tags = k > 1 ? Array.from({ length: k }, (_, i) => `${id}.t${i + 1}`) : [String(id)];
+  return tags.filter((t) => !["done", "failed", "cancelled"].includes(st[t]));
+}
+
 /** Stage ids with an active (queued/running) job for this project -> that job's lane/action/target folder. */
 export function activeByStage(jobs: Job[], project: string): Record<number, Active> {
   const out: Record<number, Active> = {};
@@ -118,8 +125,7 @@ export function activeByStage(jobs: Job[], project: string): Record<number, Acti
     const all = ids.length ? ids : [...new Set(Object.keys(st).map((k) => Number(k.split(".")[0])))];
     for (const id of all) {
       if (finishedTakes(j, id) >= jobTakes(j)) continue;
-      const k = jobTakes(j), fin = (t: string) => ["done", "failed", "cancelled"].includes(st[t]);
-      const tags = (k > 1 ? Array.from({ length: k }, (_, i) => `${id}.t${i + 1}`) : [String(id)]).filter((t) => !fin(t));
+      const tags = openTags(j, id);
       out[id] = { lane: j.lane === "local" ? "local" : "cloud", action: j.action, queued: j.status === "queued", folder: (j.req.folder as string | undefined) ?? "", job: j.id, tags };
     }
   }

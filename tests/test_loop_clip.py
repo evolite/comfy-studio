@@ -40,8 +40,9 @@ def test_the_loop_stays_inside_the_range():
 
 
 def test_a_range_shorter_than_a_loop_is_refused():
+    frames = periodic(60, 20)
     with pytest.raises(ValueError, match="too short"):
-        loop_clip.find_loop(periodic(60, 20), 0, 40, 48)
+        loop_clip.find_loop(frames, 0, 40, 48)
 
 
 def test_loop_api_refuses_a_missing_clip(tmp_path):

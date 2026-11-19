@@ -174,7 +174,10 @@ def keyframe_frames(engine, seconds, ats: list) -> list:
     total, fps, n = frames(engine, seconds), engine_spec(engine)["fps"], len(ats)
     out = []
     for i, at in enumerate(ats):
-        f = total - 1 if at is None and i == n - 1 else round((seconds * (i + 1) / n if at is None else at) * fps)
+        if at is None:
+            f = total - 1 if i == n - 1 else round(seconds * (i + 1) / n * fps)
+        else:
+            f = round(at * fps)
         f = total + f if f < 0 else f
         out.append(min(max(f, 1), total - 1))
     return out
@@ -186,7 +189,7 @@ I2VA_LINE = "For the target video, at 0.00 seconds into the target video, <Pictu
 def keyframe_refs(prompt: str, frames_at: list, fps: int = 24) -> str:
     """The motion with MiniMax's FL2VA alignment line (VIDEO_PROMPT_WRITING_GUIDE: first + last frame) in place of the I2VA
     first-frame line: Picture 1 at 0.00 s, then Picture 2.. at each keyframe's time."""
-    marks = "; ".join([f"Picture 1 (from Shot 1) aligns with the 0.00-second mark of the target video"] +
+    marks = "; ".join(["Picture 1 (from Shot 1) aligns with the 0.00-second mark of the target video"] +
                       [f"Picture {i + 2} (from Shot 1) aligns with the {f / fps:.2f}-second mark of the target video" for i, f in enumerate(frames_at)])
     body = prompt.replace(I2VA_LINE, "").lstrip()
     return f"How the reference pictures align with the target video \u2014 {marks}.\n\n{body}"

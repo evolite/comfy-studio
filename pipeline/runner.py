@@ -36,18 +36,20 @@ def _upload_needs(step, target, ctx, numbers, needs, dry_run) -> dict:
 
 def _build_jobs(step, target, ctx, numbers, images, out, final_node, labels, takes) -> list:
     """One StageJob per stage (per take): fresh seed per take, graph prepared for the target."""
-    jobs = []
-    for k in range(1, takes + 1):
-        for n in numbers:
-            stage = {**ctx.stages[n], "id": n, **({"seed": secrets.randbits(48)} if takes > 1 else {})}
-            graph = target.prepare(step.graph(ctx, stage, images.get(n), target))
-            tag = f"stage_{n}" + (f".t{k}" if takes > 1 else "")
-            label = f"{ctx.name} stage {n}" + (f" {step.suffix}" if step.suffix else "") + (f" t{k}" if takes > 1 else "")
-            final = step.final_for(ctx, stage) if step.final_for else final_node
-            j = StageJob(n, graph, label, out / "_debug" / (step.debug_prefix + tag), final, labels, tag=tag, keep=step.keep)
-            j.stage = stage
-            jobs.append(j)
-    return jobs
+    return [_build_job(step, target, ctx, n, k if takes > 1 else None, images, out, final_node, labels)
+            for k in range(1, takes + 1) for n in numbers]
+
+
+def _build_job(step, target, ctx, n, take, images, out, final_node, labels) -> StageJob:
+    """Stage n's job; take is its number when the run makes several (each with a fresh seed), else None."""
+    stage = {**ctx.stages[n], "id": n, **({"seed": secrets.randbits(48)} if take else {})}
+    graph = target.prepare(step.graph(ctx, stage, images.get(n), target))
+    tag = f"stage_{n}" + (f".t{take}" if take else "")
+    label = f"{ctx.name} stage {n}" + (f" {step.suffix}" if step.suffix else "") + (f" t{take}" if take else "")
+    final = step.final_for(ctx, stage) if step.final_for else final_node
+    j = StageJob(n, graph, label, out / "_debug" / (step.debug_prefix + tag), final, labels, tag=tag, keep=step.keep)
+    j.stage = stage
+    return j
 
 
 def _report_dry_run(step, target, jobs, problems) -> None:

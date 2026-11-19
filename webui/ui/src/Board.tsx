@@ -845,7 +845,7 @@ function SlotFigure({ p, sid, slot, phase, doneKey, isNew, onOpen }: { readonly 
       </button>
       <figcaption>{f || "root"}
         {kind === "still" && fs?.stale?.includes(sid) && <span className="pill warn" title="made from a preview take that is no longer current">⚠</span>}
-        {kind === "clip" && fs?.stale_clips?.includes(sid) && <span className="pill warn" title={f === INTERP ? "made from an older still: the still was re-rendered since — re-animate to update" : "made from an older still: the still was re-rendered since — re-animate to update"}>⚠</span>}
+        {kind === "clip" && fs?.stale_clips?.includes(sid) && <span className="pill warn" title="made from an older still: the still was re-rendered since — re-animate to update">⚠</span>}
       </figcaption>
       <button className="btn sm reveal" title="open in folder" onClick={(e) => { e.stopPropagation(); void api(`/projects/${p.name}/reveal`, "POST", { path: slotPath(f, kind, sid) }); }}>📂</button>
     </figure>

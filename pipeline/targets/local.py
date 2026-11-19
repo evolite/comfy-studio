@@ -333,27 +333,29 @@ class LocalTarget(Target):
 
         for i, job in enumerate(jobs):
             t = time.time()
-            try:
-                hist = wait(self.server, job.handle, self.timeout, job.tag, on_poll=lambda rest=jobs[i + 1:]: announce(rest))
-                if hist is None:
-                    cancel(self.server, job.handle)
-                    job.error = CANCELLED
-                    job.waited = time.time() - t
-                    yield job
-                    continue
-                job.seconds = processing_seconds(hist)
-                job.outputs = save_outputs(hist, job.debug_dir, job.node_labels, job.final_node, only={job.final_node, *job.keep},
-                                           fetch=lambda f, dest: download(self.server, f, dest))
-                job.final = final_of(job.debug_dir)
-                if not job.final:
-                    job.error = f"the final node {job.final_node} saved nothing -- check {job.debug_dir}"
-                self.finished(job)
-            except (urllib.error.URLError, ConnectionError) as e:
-                raise self._unreachable(e, "lost") from e
-            except TimeoutError as e:
-                cancel(self.server, job.handle)
-                job.error = f"{e}; cancelled it on the server"
-            except RuntimeError as e:
-                job.error = str(e)
+            self._wait_one(job, on_poll=lambda rest=jobs[i + 1:]: announce(rest))
             job.waited = time.time() - t
             yield job
+
+    def _wait_one(self, job, on_poll) -> None:
+        """Wait for one job and save its outputs; sets job.final or job.error."""
+        try:
+            hist = wait(self.server, job.handle, self.timeout, job.tag, on_poll=on_poll)
+            if hist is None:
+                cancel(self.server, job.handle)
+                job.error = CANCELLED
+                return
+            job.seconds = processing_seconds(hist)
+            job.outputs = save_outputs(hist, job.debug_dir, job.node_labels, job.final_node, only={job.final_node, *job.keep},
+                                       fetch=lambda f, dest: download(self.server, f, dest))
+            job.final = final_of(job.debug_dir)
+            if not job.final:
+                job.error = f"the final node {job.final_node} saved nothing -- check {job.debug_dir}"
+            self.finished(job)
+        except (urllib.error.URLError, ConnectionError) as e:
+            raise self._unreachable(e, "lost") from e
+        except TimeoutError as e:
+            cancel(self.server, job.handle)
+            job.error = f"{e}; cancelled it on the server"
+        except RuntimeError as e:
+            job.error = str(e)

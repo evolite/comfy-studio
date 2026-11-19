@@ -86,6 +86,7 @@ ACTIONS = {
 }
 ANIMATE = ("animate_rife",)  # build_argv pins their --target (the ⚙ setting at submit time); runpod ones run in the runpod lane
 EVENT = "::event "  # pipeline/events.py PREFIX: a machine-readable progress line (stage status, timings, prompt ids)
+NO_JOB = "no such job"
 LOCAL_DEFAULT = config.LOCAL_COMFY_URL
 EDIT_FLAGS = {"audio": "--audio", "beat_times_file": "--beat-times-file", "start_time": "--start-time",
               "lead_in_seconds": "--lead-in-seconds", "subcuts_per_image": "--subcuts-per-image",
@@ -483,7 +484,7 @@ class Manager:
         job's cancel file, jobstore.cancel_path) and its prompt comes off the backend's queue now; the other stages go on."""
         job = self.get(jid)
         if not job:
-            raise ApiError("no such job", 404)
+            raise ApiError(NO_JOB, 404)
         if job.status != "running":
             raise ApiError(f"{jid} is {job.status}: only a running job's stages can be cancelled one by one", 400)
         if job.stage_status.get(tag) in ("done", "failed", "cancelled"):
@@ -509,7 +510,7 @@ class Manager:
         clears what it queued on the backend."""
         job = self.get(jid)
         if not job:
-            raise ApiError("no such job", 404)
+            raise ApiError(NO_JOB, 404)
         if job.retry_at is not None:
             if jobstore.take_retry(jid):
                 jobstore.append_log(jid, "auto-retry cancelled")
@@ -526,7 +527,7 @@ class Manager:
         left unfinished (or no stage list) the request goes out unchanged."""
         job = self.get(jid)
         if not job:
-            raise ApiError("no such job", 404)
+            raise ApiError(NO_JOB, 404)
         if job.status not in ("failed", "cancelled"):
             raise ApiError(f"only a failed or cancelled job can be retried ({jid} is {job.status})", 400)
         jobstore.take_retry(jid)  # by hand, or the auto-retry itself: once

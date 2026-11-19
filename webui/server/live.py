@@ -70,6 +70,12 @@ class ProjectWatch:
 WATCH = ProjectWatch(config.PIPELINES_DIR)
 
 
+def _project_events(changes):
+    """One event per changed (type, project), in order."""
+    unique = list(dict.fromkeys(changes))
+    return [{"type": t, "name": n} if n else {"type": t} for t, n in unique]
+
+
 async def stream(request):
     """The SSE body for one open page."""
     WATCH.start()
@@ -84,13 +90,12 @@ async def stream(request):
             out.append({"type": "jobs"})
             jobs_v, ticked = v, now
         rev, changes = WATCH.since(rev)
-        for t, n in dict.fromkeys(changes):  # each project once per step
-            out.append({"type": t, "name": n} if n else {"type": t})
+        out += _project_events(changes)
         for e in out:
             yield f"data: {json.dumps(e)}\n\n"
-        if not out and now - pinged >= PING:
-            yield ": ping\n\n"
+        if out:
             pinged = now
-        elif out:
+        elif now - pinged >= PING:
+            yield ": ping\n\n"
             pinged = now
         await asyncio.sleep(STEP)

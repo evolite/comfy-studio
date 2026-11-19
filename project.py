@@ -370,31 +370,45 @@ def regen_local(a):
         sys.exit(f"\nno preview made for stages {[n for n in numbers if n not in ready]} (cloud step failed; rerun to retry)")
 
 
+def _print_space_warnings(d, cfg, only):
+    """Prose vs camera: advisory, never blocks."""
+    for n, s in by_id(cfg["stages"]).items():
+        if not only or n in only:
+            for w in space_warnings(d, s):
+                print(f"  stage_{n}: space: {w}")
+
+
+def _own_pass(a, d) -> bool:
+    """--hires, --finish and --new run their own pass; True when one ran."""
+    if a.hires:
+        _cmd_hires(a, d)
+    elif a.finish:
+        _cmd_finish(a, d)
+    elif a.src:
+        sys.exit("--from goes with --finish")
+    elif a.new:
+        if not a.local:
+            sys.exit("--new goes with --local (new cloud Krea2 preview, then the local pass)")
+        regen_local(a)
+    else:
+        return False
+    return True
+
+
 def cmd_generate(a):
     if a.target:
         a.local = a.target == "local"
     d, cfg = project(a.name)
-    if a.dry_run:  # prose vs camera: advisory, never blocks
-        for n, s in by_id(cfg["stages"]).items():
-            if not a.stage or n in a.stage:
-                for w in space_warnings(d, s):
-                    print(f"  stage_{n}: space: {w}")
+    if a.dry_run:
+        _print_space_warnings(d, cfg, a.stage)
     if a.takes > 1 and not a.preview:
         sys.exit("--takes goes with --preview (several Krea2 previews per stage to choose from)")
     if a.face:
         return _cmd_face(a)
     if a.il:
         _check_il_args(a)
-    elif a.hires:
-        return _cmd_hires(a, d)
-    elif a.finish:
-        return _cmd_finish(a, d)
-    elif a.src:
-        sys.exit("--from goes with --finish")
-    elif a.new:
-        if not a.local:
-            sys.exit("--new goes with --local (new cloud Krea2 preview, then the local pass)")
-        return regen_local(a)
+    elif _own_pass(a, d):
+        return
     if a.stage:
         return generate(a, a.stage, reroll=True)
     todo = [i for i in by_id(load_stages(a.name)) if not (d / f"stage_{i}.png").exists()]

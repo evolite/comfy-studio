@@ -150,7 +150,7 @@ def _post(gpus) -> dict:
         try:
             pod = _api("/pods", {**body, "gpu": {"id": gpu, "count": 1}}, "POST")  # rp-migrate: ignore (API is v2)
         except PodError as e:
-            if any(f": {c} " in str(e) for c in (401, 402, 403, 413, 422)) or (": 400 " in str(e) and "instances available" not in str(e)):
+            if any(f": {c} " in str(e) for c in (401, 402, 403, 413, 422)) or ": 400 " in str(e) and "instances available" not in str(e):
                 raise  # the request itself (or the account) is wrong: the next GPU type fails the same way
             last = f"{gpu}: {e}"
             continue

@@ -44,6 +44,19 @@ function bestFolder(mode: Mode, eligible: string[], progress: (f: string) => Pro
   return [...eligible].sort((a, b) => rank(b) - rank(a))[0];
 }
 
+/** The folder Compose should switch to, or null to stay: clips prefer interp/; a folder with nothing approved gives way. */
+function folderToShow(mode: Mode, folder: string, eligible: string[], progress: (f: string) => Progress): string | null {
+  if (!eligible.length) return null;
+  const want = mode !== "stills" && eligible.includes(INTERP) ? INTERP : folder;
+  if (want === folder && eligible.includes(folder)) return null;
+  return eligible.includes(want) ? want : bestFolder(mode, eligible, progress);
+}
+
+/** A clip folder's files with every stage's cut over its clip (stills unchanged). */
+function withCuts(mode: Mode, fs0: Project["folders"][string] | undefined, cutClips: Record<number, unknown>) {
+  return mode === "stills" || !fs0 ? fs0 : { ...fs0, clips: { ...fs0.clips, ...cutClips } };
+}
+
 /** Where a mix's still stages come from: the picked folder, else the clip folder, else the best still folder. */
 function stillsFolder(p: Project | undefined, stillsFrom: string | null, folder: string, stillFolders: string[]): string {
   if (stillsFrom !== null && stillFolders.includes(stillsFrom)) return stillsFrom;
@@ -534,11 +547,11 @@ export default function Compose({ name }: { readonly name: string }) {
   // mix: any folder with an approved clip; each stage is then checked on its own (its clip here, or its still in the stills folder).
   // Clips aren't picked from cut/ on its own: every stage plays interp/'s clip (another folder's when there is no interp/), or its cut
   const eligible = fnames.filter((f) => (mode === "stills" || f !== CUT) && progress(f).done > 0);
-  const want = mode !== "stills" && eligible.includes(INTERP) ? INTERP : folder;
-  if (eligible.length && (want !== folder || !eligible.includes(folder))) setFolder(eligible.includes(want) ? want : bestFolder(mode, eligible, progress));
+  const next = folderToShow(mode, folder, eligible, progress);
+  if (next !== null) setFolder(next);
   const clipFolder = clipFolderOf(folder);
   const fs0 = p?.folders[folder];
-  const fs = mode === "stills" || !fs0 ? fs0 : { ...fs0, clips: { ...fs0.clips, ...cutClips } };
+  const fs = withCuts(mode, fs0, cutClips);
   const stillFolders = fnames.filter((f) => Object.keys(p?.folders[f]?.stills ?? {}).length > 0);
   const sfolder = mode === "mix" ? stillsFolder(p, stillsFrom, folder, stillFolders) : folder;
   const sfs = p?.folders[sfolder];
