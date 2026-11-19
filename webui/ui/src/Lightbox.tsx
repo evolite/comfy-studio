@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import TakeDiff from "./TakeDiff";
 import { RefChip } from "./controls";
 import { useClipVolume } from "./runPrefs";
@@ -62,15 +62,18 @@ export default function Lightbox({ items, index, onIndex, onClose, onUse, projec
     addEventListener("keydown", k);
     return () => removeEventListener("keydown", k);
   }, [index, items, onIndex, onClose, cmp, diff, onUse]);
+  const downOnEmpty = useRef(false);  // a click closes only when it also started on empty space (a compare-slider drag can end there)
   const it = items[index];
   if (!it) return null;
+  const empty = (e: React.PointerEvent<HTMLDivElement>) => { downOnEmpty.current = e.target === e.currentTarget; };
+  const closeOnEmpty = (e: React.MouseEvent<HTMLDivElement>) => { if (e.target === e.currentTarget && downOnEmpty.current) onClose(); };
   const comparing = it.kind === "still" && !!it.compare && cmp;
   const follow = (e: React.PointerEvent<HTMLDivElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
     setPos(Math.min(100, Math.max(0, ((e.clientX - r.left) / r.width) * 100)));
   };
   return (
-    <div className="lightbox">
+    <div className="lightbox" onPointerDown={empty} onClick={closeOnEmpty}>
       <button type="button" className="backdrop" aria-label="close" tabIndex={-1} onClick={onClose} />
       <div className="lb-bar">
         <button className="btn" onClick={() => onIndex(Math.max(0, index - 1))}>←</button>
@@ -100,7 +103,7 @@ export default function Lightbox({ items, index, onIndex, onClose, onUse, projec
         </>}
         {it.take && <button className={`btn ${diff ? "primary" : ""}`} title="what changed between this take and the current one (d)" onClick={() => pickDiff(!diff)}>changes vs current</button>}
       </div>
-      <div className="lb-body">
+      <div className="lb-body" onPointerDown={empty} onClick={closeOnEmpty}>
         {comparing && (
           <div className="lb-cmp" onPointerMove={follow} onPointerDown={follow}>
             <img src={it.src} alt={it.label} draggable={false} />
