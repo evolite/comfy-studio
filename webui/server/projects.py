@@ -575,7 +575,7 @@ def cut(name, sid, folder, start, end):
     return cut_info(name, sid)
 
 
-def loop(name, sid, folder, start, end):
+def loop(name, sid, folder, start, end, min_seconds=None):
     """A seamless loop found inside [start, end] s of <folder>/videos/stage_<sid>.mp4, into cut/videos/ (video/loop_clip.py; RIFE on
     the local ComfyUI)."""
     d = project_dir(name).resolve()
@@ -586,10 +586,13 @@ def loop(name, sid, folder, start, end):
         raise ApiError("no such clip", 404)
     try:
         start, end = float(start), float(end)
+        min_seconds = loop_clip.MIN_SECONDS if min_seconds is None else float(min_seconds)
     except (TypeError, ValueError):
-        raise ApiError("start and end must be seconds")
+        raise ApiError("start, end and min_seconds must be seconds")
+    if min_seconds <= 0:
+        raise ApiError("min_seconds must be above 0")
     try:
-        loop_clip.loop(d, sid, folder, start, end)
+        loop_clip.loop(d, sid, folder, start, end, min_seconds)
     except ValueError as e:
         raise ApiError(str(e))
     except (OSError, ConnectionError) as e:

@@ -19,6 +19,7 @@ export default function CutEditor({ project, sid, folder, v, fps, onSaved }: {
   const [saved, setSaved] = useState<CutInfo | null>(null);
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
+  const [minLoop, setMinLoop] = useState(3);  // Seamless loop: the shortest loop it may pick, seconds
   const [inP, outP] = span;
   const snap = (s: number) => Math.max(0, Math.min(dur, Math.round(s * fps) / fps));
 
@@ -100,7 +101,7 @@ export default function CutEditor({ project, sid, folder, v, fps, onSaved }: {
   const makeLoop = () => {
     setBusy(true);
     setMsg("finding the loop and bridging its seam with RIFE…");
-    api<CutInfo>(`/projects/${project}/stages/${sid}/loop`, "POST", { folder, start: inP, end: outP })
+    api<CutInfo>(`/projects/${project}/stages/${sid}/loop`, "POST", { folder, start: inP, end: outP, min_seconds: minLoop })
       .then((r) => { setSaved(r); setMsg(`loop ${r.loop?.seconds.toFixed(2)}s (${r.loop?.in.toFixed(2)}–${r.loop?.out.toFixed(2)}s) → cut/videos ✓`); onSaved(); })
       .catch((e: Error) => setMsg(`error: ${e.message}`))
       .finally(() => setBusy(false));
@@ -129,6 +130,10 @@ export default function CutEditor({ project, sid, folder, v, fps, onSaved }: {
         <span className="spacer" />
         <button className="btn sm" onClick={() => { stop(); setSpan([0, dur]); seek(0); }}>Reset</button>
         <button className="btn sm primary" disabled={busy || !dur || !changed} onClick={save}>Save cut</button>
+        <label className="dim" title="the shortest loop Seamless loop may pick: longer loops repeat less often but their seam matches a little less well">
+          min <input type="number" min={0.5} max={Math.max(0.5, Math.floor(dur * 10) / 10)} step={0.5} value={minLoop} style={{ width: "4em" }}
+            onChange={(e) => setMinLoop(Number(e.target.value) || 3)} /> s
+        </label>
         <button className="btn sm" disabled={busy || !dur} onClick={makeLoop}
           title="find the best seamless loop inside the in/out range (keep anything that shouldn't repeat out of it) and bridge its seam with RIFE on the local ComfyUI">Seamless loop</button>
       </div>

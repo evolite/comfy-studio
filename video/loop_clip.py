@@ -25,7 +25,7 @@ from targets import local  # noqa: E402
 
 BRIDGE = 3          # frames dropped each side of the seam; RIFE makes 2 * BRIDGE new ones
 WINDOW = 5          # frames each side of the seam compared when scoring a loop
-MIN_SECONDS = 1.0   # shortest loop searched
+MIN_SECONDS = 3.0   # default shortest loop (the Cut editor's min length)
 NEAR_BEST = 1.10    # a longer loop wins when its score is within this factor of the best
 AUDIO_FADE = 6      # frames of audio crossfade at the seam
 THUMB = (96, 64)
@@ -39,14 +39,14 @@ def gray_frames(src: Path) -> np.ndarray:
     return np.frombuffer(raw, np.uint8).reshape(-1, h * w).astype(np.float32)
 
 
-def find_loop(frames: np.ndarray, first: int, last: int, fps: float) -> tuple:
-    """(i, j): the loop frames[i:j] inside [first, last) whose seam (frames around j vs around i) matches best."""
+def find_loop(frames: np.ndarray, first: int, last: int, fps: float, min_seconds: float = MIN_SECONDS) -> tuple:
+    """(i, j): the loop frames[i:j] of at least min_seconds inside [first, last) whose seam (frames around j vs around i) matches best."""
     pad = max(WINDOW, BRIDGE)
     last = min(last, len(frames))
     lo, hi = first + pad, last - pad - 1  # every compared frame and the audio past j stay inside [first, last)
-    shortest = int(round(MIN_SECONDS * fps))
+    shortest = max(1, int(round(min_seconds * fps)))
     if hi - lo <= shortest:
-        raise ValueError(f"the range is too short for a loop: keep at least {(shortest + 2 * pad) / fps:.1f}s")
+        raise ValueError(f"the in/out range is too short for a {min_seconds:g}s loop: keep at least {(shortest + 2 * pad + 1) / fps:.1f}s, or lower the min length")
     w, h = THUMB
     span = frames[lo - WINDOW:hi + WINDOW + 1].reshape(-1, h // CELL, CELL, w // CELL, CELL)
     # dist[a, b, c]: mean difference of grid cell c between span frames a and b
@@ -90,15 +90,15 @@ def _rife_between(a: Path, b: Path, n: int, out_dir: Path) -> list:
     return out[1:-1]
 
 
-def loop(d: Path, sid, folder: str, start: float, end: float) -> dict:
-    """Make cut/videos/stage_<sid>.mp4 a seamless loop found inside [start, end] s of <folder>/videos/stage_<sid>.mp4."""
+def loop(d: Path, sid, folder: str, start: float, end: float, min_seconds: float = MIN_SECONDS) -> dict:
+    """Make cut/videos/stage_<sid>.mp4 a seamless loop of at least min_seconds found inside [start, end] s of <folder>/videos/stage_<sid>.mp4."""
     d = Path(d)
     src = (d / folder if folder else d) / "videos" / f"stage_{sid}.mp4"
     dst = d / cut_clip.FOLDER / "videos" / f"stage_{sid}.mp4"
     fps, audio = probe(src)
     frames = gray_frames(src)
     first, last = max(0, int(round(start * fps))), min(len(frames), int(round(end * fps)))
-    i, j = find_loop(frames, first, last, fps)
+    i, j = find_loop(frames, first, last, fps, min_seconds)
     length, m = j - i, BRIDGE
     with tempfile.TemporaryDirectory(dir=d) as tmp:
         tmp = Path(tmp)

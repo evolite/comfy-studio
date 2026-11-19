@@ -568,7 +568,7 @@ def cut_post(name: str, sid: int, body: dict = Body(...)):
 @app.post("/api/projects/{name}/stages/{sid}/loop")
 def loop_post(name: str, sid: int, body: dict = Body(...)):
     """Seamless loop inside the Cut phase's in/out range, into cut/videos/ (RIFE on the seam, local ComfyUI)."""
-    return P.loop(name, sid, body.get("folder", ""), body.get("start"), body.get("end"))
+    return P.loop(name, sid, body.get("folder", ""), body.get("start"), body.get("end"), body.get("min_seconds"))
 
 
 @app.post("/api/projects/{name}/stages/{sid}/remove")

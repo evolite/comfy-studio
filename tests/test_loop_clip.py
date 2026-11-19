@@ -24,18 +24,18 @@ def test_a_region_that_drifts_away_and_back_is_matched_too():
     w, h = loop_clip.THUMB
     img = f.reshape(-1, h, w)
     img[60:140, :16, :16] += 120
-    i, j = loop_clip.find_loop(img.reshape(len(f), -1), 0, 240, 48)
+    i, j = loop_clip.find_loop(img.reshape(len(f), -1), 0, 240, 48, 1.0)
     has = lambda k: 60 <= k < 140
     assert has(i) == has(j - 1) == has(j)
 
 
 def test_the_loop_is_a_whole_number_of_periods():
-    i, j = loop_clip.find_loop(periodic(200, 22), 0, 200, 48)
+    i, j = loop_clip.find_loop(periodic(200, 22), 0, 200, 48, 1.0)
     assert (j - i) % 22 in (0, 1, 21)
 
 
 def test_the_loop_stays_inside_the_range():
-    i, j = loop_clip.find_loop(periodic(240, 20), 100, 230, 48)
+    i, j = loop_clip.find_loop(periodic(240, 20), 100, 230, 48, 1.0)
     assert 100 <= i and j <= 230
 
 
@@ -50,3 +50,8 @@ def test_loop_api_refuses_a_missing_clip(tmp_path):
     c.post("/api/projects", json={"name": "20260101_loop_t", "engine": "krea2"})
     r = c.post("/api/projects/20260101_loop_t/stages/1/loop", json={"folder": "interp", "start": 0, "end": 2})
     assert r.status_code == 404
+
+
+def test_the_loop_is_at_least_the_min_length():
+    i, j = loop_clip.find_loop(periodic(240, 20), 0, 240, 48, 3.0)
+    assert j - i >= 144
