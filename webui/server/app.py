@@ -565,6 +565,12 @@ def cut_post(name: str, sid: int, body: dict = Body(...)):
     return P.cut(name, sid, body.get("folder", ""), body.get("start"), body.get("end"))
 
 
+@app.post("/api/projects/{name}/stages/{sid}/loop")
+def loop_post(name: str, sid: int, body: dict = Body(...)):
+    """Seamless loop inside the Cut phase's in/out range, into cut/videos/ (RIFE on the seam, local ComfyUI)."""
+    return P.loop(name, sid, body.get("folder", ""), body.get("start"), body.get("end"))
+
+
 @app.post("/api/projects/{name}/stages/{sid}/remove")
 def stage_remove(name: str, sid: int, body: dict = Body(...)):
     P.remove_result(name, sid, body.get("folder", ""), body.get("kind", ""))

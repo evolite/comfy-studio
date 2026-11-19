@@ -1,11 +1,11 @@
 import { KeyboardEvent, PointerEvent, useEffect, useRef, useState } from "react";
 import { api, fileUrl } from "./api";
 
-type CutInfo = { folder?: string; start?: number; end?: number };
+type CutInfo = { folder?: string; start?: number; end?: number; loop?: { in: number; out: number; seconds: number } };
 type Grip = "in" | "out" | "head";
 
 /** The board's Cut phase, one per stage: the source clip with in/out handles to drag; Save cut writes cut/videos/stage_N.mp4
- * (video/cut_clip.py). Keys while the bar is focused (click it or the video): i / o = in / out at the playhead, ← → = one frame, space = play the kept span. */
+ * (video/cut_clip.py); Seamless loop finds the best loop inside the in/out range and bridges its seam with RIFE (video/loop_clip.py). Keys while the bar is focused (click it or the video): i / o = in / out at the playhead, ← → = one frame, space = play the kept span. */
 export default function CutEditor({ project, sid, folder, v, fps, onSaved }: {
   readonly project: string; readonly sid: number; readonly folder: string; readonly v: number; readonly fps: number; readonly onSaved: () => void;
 }) {
@@ -97,6 +97,14 @@ export default function CutEditor({ project, sid, folder, v, fps, onSaved }: {
       .catch((e: Error) => setMsg(`error: ${e.message}`))
       .finally(() => setBusy(false));
   };
+  const makeLoop = () => {
+    setBusy(true);
+    setMsg("finding the loop and bridging its seam with RIFE…");
+    api<CutInfo>(`/projects/${project}/stages/${sid}/loop`, "POST", { folder, start: inP, end: outP })
+      .then((r) => { setSaved(r); setMsg(`loop ${r.loop?.seconds.toFixed(2)}s (${r.loop?.in.toFixed(2)}–${r.loop?.out.toFixed(2)}s) → cut/videos ✓`); onSaved(); })
+      .catch((e: Error) => setMsg(`error: ${e.message}`))
+      .finally(() => setBusy(false));
+  };
   const pct = (s: number) => `${dur ? (s / dur) * 100 : 0}%`;
   const changed = saved?.folder !== folder || Math.abs((saved?.start ?? 0) - inP) > 1e-3 || Math.abs((saved?.end ?? -1) - outP) > 1e-3;
 
@@ -121,8 +129,10 @@ export default function CutEditor({ project, sid, folder, v, fps, onSaved }: {
         <span className="spacer" />
         <button className="btn sm" onClick={() => { stop(); setSpan([0, dur]); seek(0); }}>Reset</button>
         <button className="btn sm primary" disabled={busy || !dur || !changed} onClick={save}>Save cut</button>
+        <button className="btn sm" disabled={busy || !dur} onClick={makeLoop}
+          title="find the best seamless loop inside the in/out range (keep anything that shouldn't repeat out of it) and bridge its seam with RIFE on the local ComfyUI">Seamless loop</button>
       </div>
-      {msg && <div className="dim">{msg}</div>}
+      {msg ? <div className="dim">{msg}</div> : saved?.loop && saved.folder === folder && <div className="dim">cut/videos holds a seamless loop of {saved.loop.seconds.toFixed(2)}s ({saved.loop.in.toFixed(2)}–{saved.loop.out.toFixed(2)}s)</div>}
     </div>
   );
 }

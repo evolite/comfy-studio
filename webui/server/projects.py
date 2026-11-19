@@ -20,6 +20,7 @@ sys.path.insert(0, str(ROOT / "video"))
 import animate_pipeline  # noqa: E402
 import interpolate  # noqa: E402
 import cut_clip  # noqa: E402
+import loop_clip  # noqa: E402
 import make_edit  # noqa: E402
 import graph_settings  # noqa: E402
 import steps  # noqa: E402
@@ -571,6 +572,28 @@ def cut(name, sid, folder, start, end):
     if not 0 <= start < end <= length + 0.05 or end - start < cut_clip.MIN_SECONDS:
         raise ApiError(f"need 0 <= start < end <= {length:.2f} and at least {cut_clip.MIN_SECONDS}s kept")
     cut_clip.cut(d, sid, folder, start, min(end, length))
+    return cut_info(name, sid)
+
+
+def loop(name, sid, folder, start, end):
+    """A seamless loop found inside [start, end] s of <folder>/videos/stage_<sid>.mp4, into cut/videos/ (video/loop_clip.py; RIFE on
+    the local ComfyUI)."""
+    d = project_dir(name).resolve()
+    base = (d / folder).resolve() if folder else d
+    if folder == cut_clip.FOLDER or (base != d and base.parent != d):
+        raise ApiError("bad folder")
+    if not (base / "videos" / f"stage_{sid}.mp4").is_file():
+        raise ApiError("no such clip", 404)
+    try:
+        start, end = float(start), float(end)
+    except (TypeError, ValueError):
+        raise ApiError("start and end must be seconds")
+    try:
+        loop_clip.loop(d, sid, folder, start, end)
+    except ValueError as e:
+        raise ApiError(str(e))
+    except (OSError, ConnectionError) as e:
+        raise ApiError(f"the local ComfyUI is needed for the RIFE seam: {e}", 503)
     return cut_info(name, sid)
 
 
