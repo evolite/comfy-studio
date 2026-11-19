@@ -167,3 +167,29 @@ def test_same_models_still_free_when_memory_is_tight(monkeypatch):
     assert local.free_if_changed("http://gpu-box:8188", {}) is False  # swap is only measured for this machine
     stats["system"]["ram_free"] = 1 * 2 ** 30
     assert local.free_if_changed("http://gpu-box:8188", {}) is True and len(freed) == 2
+
+
+def test_local_reports_a_later_stage_cancelled_while_an_earlier_one_runs(monkeypatch, tmp_path):
+    from targets.base import StageJob
+    cancel_file = tmp_path / "job.cancel"
+    cancel_file.write_text("stage_2\n")
+    monkeypatch.setenv("STUDIO_CANCEL_FILE", str(cancel_file))
+    polls = {"n": 0}
+
+    def call(server, path, *a, **k):
+        if path.startswith("/history/"):
+            polls["n"] += 1
+            done = polls["n"] > 2
+            return json.dumps({"p1": {"status": {"completed": True, "status_str": "success"}}} if done else {}).encode()
+        return b"{}"
+
+    emitted = []
+    monkeypatch.setattr(local, "_call", call)
+    monkeypatch.setattr(local, "save_outputs", lambda *a, **k: {})
+    monkeypatch.setattr(local, "final_of", lambda d: d / "final.png")
+    monkeypatch.setattr(local.events, "stage", lambda tag, status, **f: emitted.append((tag, status)))
+    jobs = [StageJob(n, {}, f"s{n}", tmp_path / f"stage_{n}", "9", {}, tag=f"stage_{n}") for n in (1, 2)]
+    jobs[0].handle, jobs[1].handle = "p1", "p2"
+    first = next(local.LocalTarget("http://fake").collect(jobs))
+    assert first.tag == "stage_1" and first.final
+    assert emitted == [("stage_2", "cancelled")]  # shown while stage 1 still ran, not when the wait reached it

@@ -220,11 +220,13 @@ def download(server: str, file: dict, dest: Path) -> None:
     dest.write_bytes(_call(server, f"/view?{q}"))
 
 
-def wait(server: str, pid: str, timeout: float = 1800.0, tag: str = "") -> dict | None:
+def wait(server: str, pid: str, timeout: float = 1800.0, tag: str = "", on_poll=None) -> dict | None:
     """Wait for a queued job; returns its /history entry once it succeeded (outputs, status timestamps), None when its stage
-    was cancelled (base.cancelled)."""
+    was cancelled (base.cancelled). `on_poll` runs on every poll round (collect: report the later stages cancelled meanwhile)."""
     deadline = time.time() + timeout
     while time.time() < deadline:
+        if on_poll:
+            on_poll()
         if tag and cancelled(tag):
             return None
         hist = json.loads(_call(server, f"/history/{pid}")).get(pid)
@@ -319,11 +321,20 @@ class LocalTarget(Target):
         return len(prompt_ids)
 
     def collect(self, jobs: list):
-        """ComfyUI runs its queue in order, so wait for the jobs in order."""
-        for job in jobs:
+        """ComfyUI runs its queue in order, so wait for the jobs in order. A later stage cancelled while an earlier one runs is
+        reported cancelled at once (its prompt is already off the queue), not only when the wait reaches it."""
+        shown = set()
+
+        def announce(rest):
+            for j in rest:
+                if j.tag not in shown and cancelled(j.tag):
+                    shown.add(j.tag)
+                    events.stage(j.tag, "cancelled")
+
+        for i, job in enumerate(jobs):
             t = time.time()
             try:
-                hist = wait(self.server, job.handle, self.timeout, job.tag)
+                hist = wait(self.server, job.handle, self.timeout, job.tag, on_poll=lambda rest=jobs[i + 1:]: announce(rest))
                 if hist is None:
                     cancel(self.server, job.handle)
                     job.error = CANCELLED
