@@ -1,7 +1,7 @@
 """Seamless loop of a finished clip (the Cut phase's "Seamless loop"): <folder>/videos/stage_N.mp4 -> cut/videos/stage_N.mp4.
 
 Within the in/out range the user set, find the loop [i, j) whose seam matches best over a window of frames around it (pose and
-motion phase, not one frame), preferring the longest loop that is nearly as good as the best. Then drop BRIDGE frames each side of
+motion phase, not one frame; judged per region, so a head or hand that drifted counts even when the bodies match), preferring the longest loop that is nearly as good as the best. Then drop BRIDGE frames each side of
 the seam and let RIFE (local ComfyUI, rife49) generate the in-between frames across the gap, so the seam is motion, not a dissolve.
 The file is rotated so that bridge sits mid-file: its last frame is the real frame before its first, so the wrap is plain footage.
 Audio: the same loop with a short crossfade at the seam, rotated the same way, padded to the exact video length.
@@ -29,6 +29,7 @@ MIN_SECONDS = 1.0   # shortest loop searched
 NEAR_BEST = 1.10    # a longer loop wins when its score is within this factor of the best
 AUDIO_FADE = 6      # frames of audio crossfade at the seam
 THUMB = (96, 64)
+CELL = 16           # seam scoring compares 16x16-pixel cells of the thumbnail; the worst cell is the score
 
 
 def gray_frames(src: Path) -> np.ndarray:
@@ -46,14 +47,17 @@ def find_loop(frames: np.ndarray, first: int, last: int, fps: float) -> tuple:
     shortest = int(round(MIN_SECONDS * fps))
     if hi - lo <= shortest:
         raise ValueError(f"the range is too short for a loop: keep at least {(shortest + 2 * pad) / fps:.1f}s")
-    span = frames[lo - WINDOW:hi + WINDOW + 1]
-    dist = np.stack([np.abs(span - f).mean(axis=1) for f in span])  # dist[a, b] between span frames a and b
+    w, h = THUMB
+    span = frames[lo - WINDOW:hi + WINDOW + 1].reshape(-1, h // CELL, CELL, w // CELL, CELL)
+    # dist[a, b, c]: mean difference of grid cell c between span frames a and b
+    dist = np.stack([np.abs(span - f).mean(axis=(2, 4)).reshape(len(span), -1) for f in span])
     ks = np.arange(-WINDOW, WINDOW + 1)
     best = []
     for i in range(lo, hi - shortest):
+        a = i - lo + WINDOW + ks
         for j in range(i + shortest, hi + 1):
-            a, b = i - lo + WINDOW + ks, j - lo + WINDOW + ks
-            best.append((float(dist[b, a].mean()), i, j))
+            b = j - lo + WINDOW + ks
+            best.append((float(dist[b, a].mean(axis=0).max()), i, j))  # the worst-matching cell decides: a head that moved counts
     floor = min(s for s, _, _ in best)
     good = [(j - i, -s, i, j) for s, i, j in best if s <= floor * NEAR_BEST]
     _, _, i, j = max(good)

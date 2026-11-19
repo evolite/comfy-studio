@@ -4,16 +4,29 @@ import pytest
 import loop_clip
 
 
-def periodic(n, period, drift=0.0, size=64, seed=0):
-    """Frames of a bright bar sweeping with the given period, plus a slow drift and a little noise."""
+def periodic(n, period, drift=0.0, seed=0):
+    """Thumbnail-sized frames of a bright bar sweeping with the given period, plus a slow drift and a little noise."""
     rng = np.random.default_rng(seed)
-    x = np.arange(size)
+    w, h = loop_clip.THUMB
+    x = np.arange(w)
     out = []
     for t in range(n):
-        pos = (np.sin(2 * np.pi * t / period) + 1) * (size - 8) / 2
-        f = np.where(np.abs(x - pos) < 4, 200.0, 20.0) + drift * t + rng.normal(0, 1, size)
-        out.append(np.tile(f, 4))
+        pos = (np.sin(2 * np.pi * t / period) + 1) * (w - 8) / 2
+        row = np.where(np.abs(x - pos) < 4, 200.0, 20.0) + drift * t
+        out.append((np.tile(row, (h, 1)) + rng.normal(0, 1, (h, w))).ravel())
     return np.array(out, dtype=np.float32)
+
+
+def test_a_region_that_drifts_away_and_back_is_matched_too():
+    """The bar repeats every 20 frames; a patch in one corner (a head) is only in place before frame 60 and after 140:
+    the loop must not join a frame with the patch to one without it."""
+    f = periodic(240, 20)
+    w, h = loop_clip.THUMB
+    img = f.reshape(-1, h, w)
+    img[60:140, :16, :16] += 120
+    i, j = loop_clip.find_loop(img.reshape(len(f), -1), 0, 240, 48)
+    has = lambda k: 60 <= k < 140
+    assert has(i) == has(j - 1) == has(j)
 
 
 def test_the_loop_is_a_whole_number_of_periods():
