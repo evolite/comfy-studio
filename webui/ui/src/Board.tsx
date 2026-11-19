@@ -179,7 +179,7 @@ type RunMenuProps = {
   readonly onGo: (a: string, folder?: string) => void;
   readonly sources: AnimSource[];
   readonly allow?: Set<string>;  // only these actions are offered (the current phase's applicable runs); undefined = all
-  readonly onKeyframes?: (folder: string) => void;  // 2+ stages picked: one clip through their stills (a new keyframe stage)
+  readonly onKeyframes?: (folder: string) => void;  // exactly 2 stages picked: one clip from the first still to the second (a new stage)
 };
 
 type Est = { known: number; of: number; seconds: number; load: number; parallel?: boolean };
@@ -244,12 +244,12 @@ function AnimateForm({ sources, src, stages, why, batchHint, onPickSource, onRun
             <span className="afgo-play">▶</span>
             <span className="afgo-sub">48 fps{batchHint ? " · → batch" : ""}</span>
           </button>
-          {onKeyframes && stages > 1 && <button className="afgo keyframes" disabled={noStill || !!why("animate_rife")}
-            title={why("animate_rife") || `one 48 fps clip through these ${stages} stills in order: a new stage after the last, its motion the stages' motions joined (edit it there)`}
+          {onKeyframes && stages === 2 && <button className="afgo keyframes" disabled={noStill || !!why("animate_rife")}
+            title={why("animate_rife") || "one 48 fps clip from the first still to the second (MiniMax first + last frame): a new stage after the second, its motion the two motions joined as a draft (rewrite it as one continuous take)"}
             onClick={() => onKeyframes(src!.f)}>
-            <span className="afgo-main">Keyframes</span>
+            <span className="afgo-main">Animate between</span>
             <span className="afgo-play">▶</span>
-            <span className="afgo-sub">{stages} stills → 1 clip</span>
+            <span className="afgo-sub">first still → second still</span>
           </button>}
         </div>
       </>}
@@ -617,9 +617,9 @@ export default function Board({ name }: { readonly name: string }) {
     }
     run.mutate({ action, stages: ids, folder: sendFolder ? folder : undefined, ...takes, ...extra, ...src }, { onSuccess: () => settleDone(action, f, ids), onError });
   };
-  // the picked stages in board order -> a new keyframe stage, then animate it from the same folder
+  // the two picked stages in board order -> a new stage animating from the first still to the second, then animate it
   const keyframeClip = (f: string) => api<Stage>(`/projects/${name}/keyframes`, "POST", { stages: allStages.map((s) => s.id).filter((i) => sel.has(i)) })
-    .then(async (n) => { setSel(new Set()); await proj.refetch(); setMsg(`stage ${n.id}: keyframe clip`); await go("animate_rife", [n.id], { folder: f }); })
+    .then(async (n) => { setSel(new Set()); await proj.refetch(); setMsg(`stage ${n.id}: clip between the two stills`); await go("animate_rife", [n.id], { folder: f }); })
     .catch(showMsgErr);
   const whyCtx: WhyCtx = { p, stages: allStages, folder, animFolder, localDown: !!health && !health.local };
   const disabledWhy = (a: string, ids: number[] = []) => disabledReason(a, ids, whyCtx);
@@ -738,7 +738,7 @@ export default function Board({ name }: { readonly name: string }) {
             title={bulkDoneTip(sel.size, allSelDone, folder)}
             onClick={() => { void markDone(selected, !allSelDone); clearIfSelection(selected); }}>✓</button>
           <RunMenu project={name} ids={runIds} label="Run" workFolder={folder} allow={isUpscaleStep(phase) ? allowFor(folder) : undefined} sources={animSources(p, runIds)} why={(a) => disabledWhy(a, runIds)} onGo={(a, f) => void go(a, runIds, f === undefined ? {} : { folder: f })}
-            onKeyframes={sel.size > 1 ? (f) => void keyframeClip(f) : undefined} />
+            onKeyframes={sel.size === 2 ? (f) => void keyframeClip(f) : undefined} />
           <button className="btn" title="add a stage" onClick={() => void api(`/projects/${name}/stages`, "POST").then(() => proj.refetch())}>＋</button>
         </div>
       </div>

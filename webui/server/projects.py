@@ -436,27 +436,24 @@ def _beat(motion: str, first: bool) -> str:
 
 @locked
 def keyframe_stage(name, ids):
-    """One clip through the stills of stages `ids`, in that order: a copy of the first (its stills, LoRAs, voice) placed after the
-    last, `keyframes` = the others, each pinned where its beat starts (the stages' durations, scaled into KF_MAX_SECONDS), and the
-    stages' motions joined as beats."""
-    if len(ids) < 2 or len(set(ids)) != len(ids):
-        raise ApiError("pick two or more different stages")
+    """One clip from stage a's still to stage b's (MiniMax first + last frame): a copy of a (its stills, LoRAs, voice) placed after
+    b, `keyframes` = b on the clip's last frame, the two durations added (at most KF_MAX_SECONDS) and the two motions joined
+    as a draft to rewrite as one continuous take."""
+    if len(ids) != 2 or ids[0] == ids[1]:
+        raise ApiError("pick exactly two stages: the clip runs from the first still to the second")
     cfg = load(name)
     by = {s.get("id", pos): s for pos, s in enumerate(cfg["stages"], 1)}
     if missing := [i for i in ids if i not in by]:
         raise ApiError(f"no stage {missing}", 404)
-    durs = [float(by[i].get("duration") or 5) for i in ids]
-    total = min(sum(durs), KF_MAX_SECONDS)
-    starts = [sum(durs[:k]) * total / sum(durs) for k in range(len(ids))]
     first = by[ids[0]]
+    total = min(sum(float(by[i].get("duration") or 5) for i in ids), KF_MAX_SECONDS)
     new = {**json.loads(json.dumps(first)), "id": max(stage_ids(cfg), default=0) + 1, "duration": round(total, 1),
-           "keyframes": [{"stage": i, "at": round(t, 2)} for i, t in zip(ids[1:], starts[1:])]}
+           "keyframes": [{"stage": ids[1]}]}
     new["done"] = [k for k in new.get("done") or [] if not k.endswith("/videos")]
     sound = (first.get("motion") or "").partition("overall_soundscape:")[2]
     beats = [_beat(by[i].get("motion") or "", k == 0) for k, i in enumerate(ids)]
     new["motion"] = " Then, ".join(b for b in beats if b) + (f"\n\noverall_soundscape:{sound}" if sound else "")
-    for k in ("video_seed",):
-        new.pop(k, None)
+    new.pop("video_seed", None)
     cfg["stages"].insert(max(pos for pos, s in enumerate(cfg["stages"]) if s.get("id", pos + 1) in ids) + 1, new)
     d = project_dir(name)
     for f in [d] + [p for p in d.iterdir() if p.is_dir() and not p.name.startswith("_") and p.name not in ("videos", "edits")]:

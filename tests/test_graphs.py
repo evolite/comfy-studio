@@ -82,8 +82,8 @@ def test_keyframe_frames_spread_evenly_and_land_inside_the_clip():
     assert ap.keyframe_frames("minimax", 6.0, [99]) == [total - 1]
 
 
-def test_keyframe_refs_name_each_picture_once():
-    p = ap.keyframe_refs("She walks.", [72, 148])
-    assert p.splitlines()[:2] == ["At 3.00 seconds into the target video, <Picture 2> (from [Shot 1]) is fully referenced.",
-                                  "At 6.17 seconds into the target video, <Picture 3> (from [Shot 1]) is fully referenced."]
-    assert ap.keyframe_refs("<Picture 2> here", [72]) == "<Picture 2> here"
+def test_keyframe_refs_use_the_fl2va_alignment_line_in_place_of_the_i2va_one():
+    p = ap.keyframe_refs(ap.I2VA_LINE + "\n\nintegrated_multimodal_description: [Shot 1] She walks.", [239])
+    assert p.splitlines()[0] == ("How the reference pictures align with the target video \u2014 Picture 1 (from Shot 1) aligns with the "
+                                 "0.00-second mark of the target video; Picture 2 (from Shot 1) aligns with the 9.96-second mark of the target video.")
+    assert ap.I2VA_LINE not in p and p.endswith("integrated_multimodal_description: [Shot 1] She walks.")

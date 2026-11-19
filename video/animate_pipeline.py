@@ -178,11 +178,16 @@ def keyframe_frames(engine, seconds, ats: list) -> list:
     return out
 
 
+I2VA_LINE = "For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced."
+
+
 def keyframe_refs(prompt: str, frames_at: list, fps: int = 24) -> str:
-    """The motion with one H3 reference line per keyframe in front: <Picture 2> at its time, <Picture 3>, ..."""
-    lines = [f"At {f / fps:.2f} seconds into the target video, <Picture {i + 2}> (from [Shot 1]) is fully referenced."
-             for i, f in enumerate(frames_at) if f"<Picture {i + 2}>" not in prompt]
-    return "\n".join(lines + [prompt]) if lines else prompt
+    """The motion with MiniMax's FL2VA alignment line (VIDEO_PROMPT_WRITING_GUIDE: first + last frame) in place of the I2VA
+    first-frame line: Picture 1 at 0.00 s, then Picture 2.. at each keyframe's time."""
+    marks = "; ".join([f"Picture 1 (from Shot 1) aligns with the 0.00-second mark of the target video"] +
+                      [f"Picture {i + 2} (from Shot 1) aligns with the {f / fps:.2f}-second mark of the target video" for i, f in enumerate(frames_at)])
+    body = prompt.replace(I2VA_LINE, "").lstrip()
+    return f"How the reference pictures align with the target video \u2014 {marks}.\n\n{body}"
 
 
 def add_keyframes(graph: dict, keyframes: list, engine: str = DEFAULT_ENGINE) -> None:

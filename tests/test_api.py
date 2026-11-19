@@ -396,24 +396,24 @@ def test_animate_refused_without_motion(monkeypatch):
     assert not _jobs()
 
 
-def test_keyframe_stage_joins_the_picked_stages_into_one_clip_stage():
+def test_keyframe_stage_animates_from_the_first_still_to_the_second():
     import json
     d = config.PIPELINES_DIR / "20261118_kf"
     (d / "hires").mkdir(parents=True)
     head = "For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.\n\nintegrated_multimodal_description: [Shot 1] "
     st = [{"id": i, "krea_scene": "s", "duration": dur, "video_loras": {"x": 1}, "voice": "v", "done": ["preview", "hires/videos"],
            "motion": f"{head}Her voice (S1) is {{voice}}. Beat {i}.\n\noverall_soundscape: Room {i}.\n\nnon_diegetic_music: N/A"}
-          for i, dur in ((2, 2), (3, 4), (7, 6))]
+          for i, dur in ((2, 4), (7, 8))]
     (d / "project.json").write_text(json.dumps({"engine": "krea2", "settings": {}, "stages": [{"id": 1, "krea_scene": "s"}] + st}))
     (d / "hires" / "stage_2.png").write_bytes(b"png2")
     c = client()
-    assert c.post("/api/projects/20261118_kf/keyframes", json={"stages": [2]}).status_code == 400
-    r = c.post("/api/projects/20261118_kf/keyframes", json={"stages": [2, 3, 7]})
+    for bad in ([2], [2, 2], [1, 2, 7]):
+        assert c.post("/api/projects/20261118_kf/keyframes", json={"stages": bad}).status_code == 400
+    r = c.post("/api/projects/20261118_kf/keyframes", json={"stages": [2, 7]})
     assert r.status_code == 200, r.text
     new = r.json()
-    assert new["id"] == 8 and new["duration"] == 10.0 and new["done"] == ["preview"]
-    assert new["keyframes"] == [{"stage": 3, "at": 1.67}, {"stage": 7, "at": 5.0}]
-    assert new["motion"] == "Her voice (S1) is {voice}. Beat 2. Then, Beat 3. Then, Beat 7.\n\noverall_soundscape: Room 2.\n\nnon_diegetic_music: N/A"
+    assert new["id"] == 8 and new["duration"] == 10.0 and new["done"] == ["preview"] and new["keyframes"] == [{"stage": 7}]
+    assert new["motion"] == "Her voice (S1) is {voice}. Beat 2. Then, Beat 7.\n\noverall_soundscape: Room 2.\n\nnon_diegetic_music: N/A"
     assert new["video_loras"] == {"x": 1} and new["voice"] == "v"
-    assert [s["id"] for s in json.loads((d / "project.json").read_text())["stages"]] == [1, 2, 3, 7, 8]
+    assert [s["id"] for s in json.loads((d / "project.json").read_text())["stages"]] == [1, 2, 7, 8]
     assert (d / "hires" / "stage_8.png").read_bytes() == b"png2"
