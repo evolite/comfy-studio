@@ -606,13 +606,12 @@ def card_sound_files() -> list:
 
 def card_times(cuts, overlap=0, collage_land=(), collage_start=None) -> list:
     """Edit seconds of every card impact: each polaroid still's first frame (its card hits on it) and each collage landing.
-    overlap = frames each later cut overlaps the one before (a no-music edit's transitions): one number, or one per join."""
-    overlaps = overlap if isinstance(overlap, (list, tuple)) else [overlap] * max(0, len(cuts) - 1)
+    overlap = frames each later cut overlaps the one before (a no-music edit's transitions)."""
     if not POLAROID and not collage_land:
         return []
     times, start, drop = [], 0, round(polaroid.LAND * 0.6)
     for k, c in enumerate(cuts):
-        begin = start - sum(overlaps[:k])
+        begin = start - k * overlap
         if POLAROID and c.clip.suffix == ".png":
             times.append(begin / FPS)
         if c.clip.name == "_collage":
@@ -942,37 +941,31 @@ def _fade_chains(total, fade_in, fade_out, chains, alabel="aj") -> None:
     chains.append(f"[{alabel}]{','.join(af) or 'anull'},alimiter=limit=0.95[aout]")
 
 
-def scenario_mux(cut_paths, cuts, joins, out_path, muted=(), clip_volume=1.0, fade_in=0.0, fade_out=FADE_OUT, music=None):
-    """Grade the clips and join the cuts in ONE ffmpeg pass, so each frame is encoded once; cut_paths = {cut index: pre-rendered
-    file} for the stills (their zoompan drift). joins = one (transition, frames) per join: an xfade (acrossfade for the clips' own
-    audio) overlapping the two cuts by that many frames, or a hard cut ("cut", 0). The total is sum(frames) - sum(overlaps).
-    music (see _music_chains) lays a track over it."""
+def scenario_mux(cut_paths, cuts, t_frames, transition, out_path, muted=(), clip_volume=1.0, fade_in=0.0, fade_out=FADE_OUT,
+                 music=None):
+    """Grade the clips and join every cut with xfade (acrossfade for the clips' own audio) in ONE ffmpeg pass, so each frame is
+    encoded once; cut_paths = {cut index: pre-rendered file} for the stills (their zoompan drift). Each transition overlaps
+    two cuts by t_frames, so the total is sum(frames) - (n-1) * t_frames. music (see _music_chains) lays a track over it."""
     n = len(cuts)
     lens = [c.frames / FPS for c in cuts]
-    over = [0 if t == "cut" else f for t, f in joins]
-    total_frames = sum(c.frames for c in cuts) - sum(over)
-    total = total_frames / FPS
+    total_frames = sum(c.frames for c in cuts) - (n - 1) * t_frames
+    total, d = total_frames / FPS, t_frames / FPS
     inputs, chains = [], []
     fmt = AFMT
     for k, c in enumerate(cuts):  # input k = cut k (a clip seeked past its trim, or a still's pre-rendered file)
         inputs += _scenario_input(k, c, cut_paths, lens, fmt, muted, clip_volume, chains)
-    if not any(over):
+    if t_frames == 0:
         chains.append("".join(f"[v{k}][a{k}]" for k in range(n)) + f"concat=n={n}:v=1:a=1[vj][aj]")
     else:
         v, a, end = "v0", "a0", lens[0]
         for k in range(1, n):
-            (t, _), d = joins[k - 1], over[k - 1] / FPS
-            if d:
-                chains.append(f"[{v}][v{k}]xfade=transition={t}:duration={d:.4f}:offset={end - d:.4f}[x{k}]")
-                chains.append(f"[{a}][a{k}]acrossfade=d={d:.4f}:c1=tri:c2=tri[y{k}]")
-            else:
-                chains.append(f"[{v}][v{k}]concat=n=2:v=1:a=0[x{k}]")
-                chains.append(f"[{a}][a{k}]concat=n=2:v=0:a=1[y{k}]")
+            chains.append(f"[{v}][v{k}]xfade=transition={transition}:duration={d:.4f}:offset={end - d:.4f}[x{k}]")
+            chains.append(f"[{a}][a{k}]acrossfade=d={d:.4f}:c1=tri:c2=tri[y{k}]")
             v, a, end = f"x{k}", f"y{k}", end - d + lens[k]
         chains.append(f"[{v}]null[vj]")
         chains.append(f"[{a}]anull[aj]")
     if music:
-        starts = [sum(lens[:k]) - sum(over[:k]) / FPS for k in range(n)]
+        starts = [sum(lens[:k]) - k * d for k in range(n)]
         inputs += _music_chains(n, music, starts, total, chains)
     _fade_chains(total, fade_in, fade_out, chains, "ajm" if music else "aj")
 
@@ -982,41 +975,10 @@ def scenario_mux(cut_paths, cuts, joins, out_path, muted=(), clip_volume=1.0, fa
     return total_frames
 
 
-def chained_from(pipeline_dir, clip) -> bool:
-    """The clip was animated from the last frame of the clip before it (an animate chain: <folder>/_debug/stage_N/source.json
-    names the chain/ folder), so joining the two with a hard cut plays as one continuous shot."""
-    stem = clip.stem
-    try:
-        return stem[6:].isdigit() and json.loads((Path(pipeline_dir) / "_debug" / stem / "source.json").read_text()).get("folder") == "chain"
-    except (OSError, ValueError):
-        return False
-
-
-def scenario_joins(pipeline_dir, clips, joins, transition, transition_seconds):
-    """One (transition, seconds) per join from --joins (None or "auto" = the default: a seamless cut into a clip that continues
-    the one before it, else --transition), plus the stage ids whose first frame a seamless cut drops (it repeats the last
-    frame of the clip before)."""
-    joins = list(joins or [])
-    out, drop_first = [], set()
-    for k in range(1, len(clips)):
-        j = joins[k - 1] if k - 1 < len(joins) else None
-        chained = clips[k].suffix != ".png" and chained_from(pipeline_dir, clips[k])
-        t = (j or {}).get("transition") or "auto"
-        if t == "auto":
-            t = "cut" if chained else transition
-        if t not in TRANSITIONS:
-            raise ValueError(f"join {k}: transition must be auto or one of {', '.join(TRANSITIONS)}")
-        out.append((t, 0.0 if t == "cut" else float((j or {}).get("seconds") or transition_seconds)))
-        if t == "cut" and chained and clips[k].stem[6:].isdigit():
-            drop_first.add(int(clips[k].stem[6:]))
-    return out, drop_first
-
-
 def make_scenario(pipeline_dir, out_name=None, stills=False, order=None, transition="fade", transition_seconds=0.6,
-                  still_seconds=STILL_SECONDS, fade_in=0.0, opts: EditOptions = None, music=None, joins=None) -> Path:
+                  still_seconds=STILL_SECONDS, fade_in=0.0, opts: EditOptions = None, music=None) -> Path:
     """No-music edit: every stage in full, joined by transitions, over the clips' own audio (see the module docstring).
-    music = (beat_times_file, start_time, audio) lays that track over it from opts.music_from_stage on, unsynced.
-    joins = per join {"transition": auto | <TRANSITIONS>, "seconds": s} or None (scenario_joins)."""
+    music = (beat_times_file, start_time, audio) lays that track over it from opts.music_from_stage on, unsynced."""
     global FPS
     opts = opts or EditOptions()
     if transition not in TRANSITIONS:
@@ -1034,27 +996,21 @@ def make_scenario(pipeline_dir, out_name=None, stills=False, order=None, transit
     collage_files = collage_stills(pipeline_dir, opts) if opts.collage else []
     if opts.card_sounds:
         card_sound_files()
-    plan, drop_first = scenario_joins(pipeline_dir, clips, joins, transition, transition_seconds)
-    for sid in drop_first:  # a seamless cut: the next clip's first frame is the last frame of the one before
-        TRIMS[sid] = TRIMS.get(sid, 0.0) + 1 / FPS
     cuts, t_frames = scenario_cuts(clips, still_seconds, transition_seconds)
     if transition == "cut":
         t_frames = 0
-    shortest = lambda k: min(cuts[k - 1].frames, cuts[k].frames) // 2  # noqa: E731
-    join_frames = [(t, 0 if t == "cut" else min(round(sec * FPS), shortest(k))) for k, (t, sec) in enumerate(plan, 1)]
     land_at = []
     if collage_files:  # the outro: a cut of its own; its first card lands once the transition into it is over
         land_at = [t_frames + round(k * COLLAGE_EVERY * FPS) for k in range(len(collage_files))]
         cuts.append(Cut(Path("_collage"), land_at[-1] + round(COLLAGE_HOLD * FPS), flare=False, seg=len(cuts)))
-        join_frames.append((transition, t_frames))
-    total_frames = sum(c.frames for c in cuts) - sum(0 if t == "cut" else f for t, f in join_frames)
+    total_frames = sum(c.frames for c in cuts) - (len(cuts) - 1) * t_frames
     track = None
     if music:
         _, song_start, audio = _load_music(*music)
         at = stage_index(clips, opts.music_from_stage)
         track = (audio, song_start, music_filter(opts), opts.duck, at)
     print(f"{pipeline_dir.name}: {len(clips)} stages, "
-          f"{f'music {audio.name} from {song_start:.2f}s at stage {clips[at].stem}' if track else 'no music'}, transitions {', '.join(f'{t} {f / FPS:.2f}s' for t, f in join_frames) or 'none'}, "
+          f"{f'music {audio.name} from {song_start:.2f}s at stage {clips[at].stem}' if track else 'no music'}, transition {transition} {t_frames / FPS:.2f}s, "
           f"fade in {fade_in}s / out {opts.fade_out}s, total {total_frames} frames / {total_frames / FPS:.3f}s at {FPS} fps", flush=True)
     events.note("frames", n=total_frames)
 
@@ -1073,8 +1029,9 @@ def make_scenario(pipeline_dir, out_name=None, stills=False, order=None, transit
 
     out_path = _out_path(pipeline_dir, out_name)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    scenario_mux(paths, cuts, join_frames, out_path, set(opts.mute_clip_audio), opts.clip_volume, fade_in, opts.fade_out, track)
-    times = card_times(cuts, [0 if t == "cut" else f for t, f in join_frames], land_at) if opts.card_sounds else []
+    scenario_mux(paths, cuts, t_frames, transition, out_path, set(opts.mute_clip_audio), opts.clip_volume, fade_in, opts.fade_out,
+                 track)
+    times = card_times(cuts, t_frames, land_at) if opts.card_sounds else []
     if times:
         add_card_sounds(out_path, times, opts.card_sound_volume, seed=len(times))
     print(f"  -> {out_path}")
@@ -1124,9 +1081,6 @@ def main():
                     help="Music without beat cuts: the --no-music layout (every stage in full) with the track laid over the clips' sound")
     ap.add_argument("--transition", default="fade", choices=TRANSITIONS, help="No-music edit: xfade transition between stages (cut = hard cuts)")
     ap.add_argument("--transition-seconds", type=float, default=0.6, help="No-music edit: length of each transition")
-    ap.add_argument("--joins", type=json.loads, default=None,
-                    help='No-music edit: JSON list, one per join in stage order: null or {"transition": "auto"|<transition>, "seconds": s}; '
-                         "auto = a seamless cut into a clip that continues the one before it (an animate chain), else --transition")
     ap.add_argument("--still-seconds", type=float, default=STILL_SECONDS, help="No-music edit: how long a still holds")
     ap.add_argument("--fade-in", type=float, default=0.0, help="No-music edit: seconds the edit fades in from black")
     ap.add_argument("--mute-clip-audio", type=int, nargs="+", default=[], metavar="ID", help="Stage ids whose clip audio is left out")
@@ -1147,7 +1101,7 @@ def main():
     if a.no_music or a.no_sync:
         music = (a.beat_times_file, a.start_time, a.audio) if a.no_sync and not a.no_music else None
         make_scenario(a.pipeline_dir, a.out_name, a.stills, a.order, a.transition, a.transition_seconds, a.still_seconds,
-                      a.fade_in, opts, music, a.joins)
+                      a.fade_in, opts, music)
         return
     make_edit(a.pipeline_dir, a.out_name, a.audio, a.beat_times_file, a.start_time, a.lead_in_seconds,
                 a.subcuts_per_image, a.beats_per_cut, a.last_weight, a.zoom, a.stills, a.order, opts)

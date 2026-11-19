@@ -148,16 +148,12 @@ def il_source(ctx, n):
 
 # --- animate / interpolate ---------------------------------------------------------------------------------------
 def _clip_from(ctx, n=None):
-    """The folder stage n animates from: the run's folder, or `chain/` for a stage of an animate chain after its first."""
-    return getattr(ctx, "chain_inputs", {}).get(n, getattr(ctx, "clip_from", ""))
-
-
-CHAIN = "chain"  # an animate chain's hand-off frames: chain/stage_N.png = the last frame of the clip before stage N
+    return getattr(ctx, "clip_from", "")
 
 
 def _keyframes(ctx, stage, engine, duration, image, target):
     """The stage's `keyframes` ([{"stage": k, "at": seconds}]): those stills (same folder) uploaded, at their frames."""
-    src = ctx.d / _clip_from(ctx, stage["id"])
+    src = ctx.d / _clip_from(ctx)
     pngs = []
     for kf in stage["keyframes"]:
         png = src / f"stage_{kf['stage']}.png"
@@ -186,13 +182,12 @@ def _animate_graph(ctx, stage, image, target):
     duration = ctx.duration_of(n, engine)
     audio = bool(stage.get("audio"))
     kfs = _keyframes(ctx, stage, engine, duration, image, target) if stage.get("keyframes") else None
-    chained = bool(getattr(ctx, "chain_next", None))
     if kfs:
         motion = clips.keyframe_refs(motion, [f for _, f in kfs], clips.engine_spec(engine)["fps"])
     return clips.build_graph(clips.template_for(engine, audio), image, motion, duration, loras,
                              stage.get("video_seed", secrets.randbits(32)), ctx.cfg.get("video_megapixels"), rife=True,
-                             engine=engine, audio=audio, aspect=clips.aspect_of(ctx.d / _clip_from(ctx, n) / f"stage_{n}.png"),
-                             keyframes=kfs, last_frame=chained)
+                             engine=engine, audio=audio, aspect=clips.aspect_of(ctx.d / _clip_from(ctx) / f"stage_{n}.png"),
+                             keyframes=kfs)
 
 
 def _save_video(ctx, src: Path, dest: Path) -> Path:
@@ -206,22 +201,7 @@ def _note_rife_source(ctx, n):
     """interp/_debug/stage_N/source.json: which folder's still the clip was animated from (stale-clip check)."""
     d = ctx.d / rife.FOLDER / "_debug" / f"stage_{n}"
     d.mkdir(parents=True, exist_ok=True)
-    (d / "source.json").write_text(json.dumps({"folder": _clip_from(ctx, n)}, indent=2) + "\n")
-
-
-def _hand_off(ctx, job, files):
-    """An animate chain: this clip's last frame -> chain/stage_<next>.png, the next stage's first frame (the one it replaces
-    stays restorable)."""
-    nxt = ctx.chain_next.get(job.n)
-    if nxt is None:
-        return
-    if clips.LAST_SAVE not in files:
-        raise RuntimeError(f"no last frame among the outputs -- the chain can't continue to stage {nxt} ({job.debug_dir})")
-    dest = ctx.d / CHAIN / f"stage_{nxt}.png"
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    history.archive(ctx.d, dest)
-    shutil.copyfile(files[clips.LAST_SAVE], dest)
-    print(f"  [{job.tag}] last frame -> {dest} (stage {nxt} starts here)", flush=True)
+    (d / "source.json").write_text(json.dumps({"folder": _clip_from(ctx)}, indent=2) + "\n")
 
 
 def _save_clip(ctx, job, out):
@@ -234,8 +214,6 @@ def _save_clip(ctx, job, out):
          "audio": bool(job.stage.get("audio")), "rife": True}, indent=2))
     rdest = _save_video(ctx, job.final, ctx.d / rife.FOLDER / "videos" / f"stage_{job.n}.mp4")
     _note_rife_source(ctx, job.n)
-    if getattr(ctx, "chain_next", None):
-        _hand_off(ctx, job, dict(job.outputs))
     print(f"  [{job.tag}] -> {rdest} (RIFE x{rife.MULTIPLIER})", flush=True)
     return rdest
 
@@ -259,7 +237,7 @@ STEPS = {s.name: s for s in [
          lambda c: ("436", {"436": "final"}), needs=finish_source, suffix="finish",
          needs_hint="run an upscale first (IL: project.py {name} generate {stages} --local; latent: ... --hires --local)"),
     Step("animate", _clip_from, _animate_graph, lambda c: (clips.RIFE_SAVE, {}), needs=_clip_from,
-         targets=("cloud", "runpod"), keep=(clips.LAST_SAVE,),
+         targets=("cloud", "runpod"),
          debug_prefix="i2v_", suffix="animate", save=_save_clip,
          needs_hint="no still to animate: make it first, or name the folder it is in"),
 ]}

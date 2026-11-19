@@ -423,16 +423,3 @@ def test_keyframe_stage_animates_from_the_first_still_to_the_second():
     assert new["video_loras"] == {"x": 1} and new["voice"] == "v"
     assert [s["id"] for s in json.loads((d / "project.json").read_text())["stages"]] == [1, 2, 7, 8]
     assert (d / "hires" / "stage_8.png").read_bytes() == b"png2"
-
-
-def test_animate_chain_runs_one_job_with_chain_and_is_never_batched(monkeypatch):
-    import pytest
-    from jobs import Manager
-    from projects import ApiError
-    _batch_project()
-    m = Manager()
-    argv = m.build_argv("20261010_batch", "animate_chain", {"stages": [1, 2], "folder": ""})
-    assert argv[-1] == "--chain" and "1" in argv and "2" in argv
-    assert "--chain" not in m.build_argv("20261010_batch", "animate_rife", {"stages": [1, 2], "folder": ""})
-    with pytest.raises(ApiError, match="can't be batched"):
-        m.add_to_batch("20261010_batch", "animate_chain", {"stages": [1, 2]})

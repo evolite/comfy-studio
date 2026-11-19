@@ -1,11 +1,11 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, clipKey, doneIn, fileUrl, Job, Project } from "./api";
 import { hoverPlay } from "./Board";
 import Lightbox from "./Lightbox";
 import { useJobs, useProject, useRun } from "./hooks";
 import { MixPreview } from "./MixPreview";
-import { ScenarioControls, StartSlider, TRANSITIONS, useDefaultBeats, type Fit, type Music } from "./Music";
+import { ScenarioControls, StartSlider, useDefaultBeats, type Fit, type Music } from "./Music";
 
 type Audio = { tracks: string[]; beat_files: string[] };
 type Item = { key: number; id: number };
@@ -124,11 +124,8 @@ function mergeOrder(all: number[], seq: number[]): number[] {
 type EditReqArgs = {
   folder: string; mode: Mode; items: Item[]; isClip: (id: number) => boolean; sfolder: string; zoom: boolean; musicOn: boolean; beatSync: boolean;
   muted: number[]; music: Music; opts: Record<string, string>;
-  pol: Polaroid; cfolder: string; joins: Record<string, string>;
+  pol: Polaroid; cfolder: string;
 };
-
-/** A join's key: the two stages it joins, in timeline order. */
-const joinKey = (a: number, b: number) => `${a}>${b}`;
 
 /** Polaroid look (per project, in browser storage): stills as cards, the collage outro's stages (picked: null = auto, the
  * approved stills that have no clip), card width, beats per landing. `collage` is the effective list, filled in by the page. */
@@ -190,10 +187,8 @@ function optValue(k: string, v: unknown): unknown {
  * or not. No music / no sync = the full-length layout. */
 function soundFields(a: EditReqArgs, mutedHere: number[]) {
   const req: Record<string, unknown> = { mute_clip_audio: mutedHere, ...optFields(a) };
-  const joins = a.items.slice(1).map((it, k) => { const t = a.joins[joinKey(a.items[k].id, it.id)]; return t && t !== "auto" ? { transition: t } : null; });
-  const perJoin = joins.some(Boolean) ? { joins } : {};
-  if (!a.musicOn) return { ...req, no_music: true, ...scenarioFields(a), ...perJoin };
-  if (!a.beatSync) return { ...req, beat_sync: false, ...scenarioFields(a), ...perJoin };
+  if (!a.musicOn) return { ...req, no_music: true, ...scenarioFields(a) };
+  if (!a.beatSync) return { ...req, beat_sync: false, ...scenarioFields(a) };
   return { ...req, beat_sync: true, clip_audio: a.mode !== "stills" };
 }
 
@@ -518,9 +513,6 @@ export default function Compose({ name }: { readonly name: string }) {
     return n;
   });
   const pkey = `composePolaroid:${name}`;
-  const jkey = `joins:${name}`;
-  const [joins, setJoins] = useState<Record<string, string>>(() => loadJson(jkey, {}));
-  const setJoin = (k: string, t: string) => setJoins((j) => { const n = { ...j, [k]: t }; if (t === "auto") delete n[k]; store(jkey, n); return n; });
   const [polSaved, setPolSaved] = useState<Polaroid>(() => ({ ...NO_POLAROID, ...loadJson<Partial<Polaroid>>(pkey, {}), collage: [] }));
   useEffect(() => store(pkey, { on: polSaved.on, picked: polSaved.picked, size: polSaved.size, beats: polSaved.beats, sounds: polSaved.sounds, svol: polSaved.svol }), [pkey, polSaved]);
   const [play, setPlay] = useState<string | null>(null);
@@ -590,7 +582,7 @@ export default function Compose({ name }: { readonly name: string }) {
   const firstVoiced = items.find((i) => isClip(i.id) && !muted.includes(i.id) && fs?.clips?.[i.id]);
   const voiceClip = firstVoiced && { url: fileUrl(name, clipFolder(firstVoiced.id), "clip", firstVoiced.id, fs!.clips[firstVoiced.id]), trim: 0 };
   const render = () => {
-    run.mutate(editRequest({ folder, mode, items, isClip, sfolder, zoom, musicOn, beatSync, muted, music, opts, pol, cfolder, joins }), {
+    run.mutate(editRequest({ folder, mode, items, isClip, sfolder, zoom, musicOn, beatSync, muted, music, opts, pol, cfolder }), {
       onError: (e) => setMsg(`error: ${e.message}`),
     });
   };
@@ -613,18 +605,12 @@ export default function Compose({ name }: { readonly name: string }) {
           <button className="btn sm" title="back to every stage in stage order" onClick={() => commit(null)}>Reset order</button>
         </div>
         <div className="strip">
-          {items.map((it, i) => (<Fragment key={it.key}>
-            {i > 0 && !synced && <select className="cmp-join" value={joins[joinKey(items[i - 1].id, it.id)] ?? "auto"}
-              title="how this shot joins the one before: auto = a seamless cut when it continues the previous clip (Animate chain), else the Music setting"
-              onChange={(e) => setJoin(joinKey(items[i - 1].id, it.id), e.target.value)}>
-              <option value="auto">auto</option>
-              {TRANSITIONS.map((t) => <option key={t} value={t}>{t === "cut" ? "cut (seamless)" : t}</option>)}
-            </select>}
-            <Chip it={it} i={i} dragging={drag === i} clip={isClip(it.id)} thumb={thumb(it.id)} canSwitch={canSwitch(it.id)}
+          {items.map((it, i) => (
+            <Chip key={it.key} it={it} i={i} dragging={drag === i} clip={isClip(it.id)} thumb={thumb(it.id)} canSwitch={canSwitch(it.id)}
               audible={isClip(it.id)} muted={muted.includes(it.id)}
               onDragStart={() => setDrag(i)} onDrop={() => reorder(i)} onDrop_={() => commit(items.filter((x) => x.key !== it.key))}
               onSwitch={() => setKind(it.id, isClip(it.id) ? "still" : "clip")} onMute={() => toggleMute(it.id)} />
-          </Fragment>))}
+          ))}
           {items.length === 0 && <div className="dim cmp-empty">no {mode === "mix" ? "" : "approved "}{EMPTY_KIND[mode]} in this folder</div>}
         </div>
         <div className="pool"><span className="dim">add</span>

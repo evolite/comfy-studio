@@ -85,24 +85,3 @@ def test_no_music_edit_plays_every_stage_in_full_through_transitions(tmp_path, t
     short = int(subprocess.run(["ffprobe", "-v", "error", "-count_frames", "-select_streams", "v", "-show_entries",
                                 "stream=nb_read_frames", "-of", "csv=p=0", str(out)], capture_output=True, text=True).stdout)
     assert short == frames - 30  # --trim-end 2=1: one second off stage 2's end
-
-
-@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs ffmpeg")
-def test_no_music_edit_takes_a_transition_per_join_and_a_seamless_cut_into_a_chained_clip(tmp_path):
-    import json
-    run = tmp_path / "run"
-    (run / "videos").mkdir(parents=True)
-    for n in (1, 2, 3):
-        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=red:s=64x96:d=2:r=24",
-                        str(run / "videos" / f"stage_{n}.mp4")], check=True)
-    (run / "_debug" / "stage_3").mkdir(parents=True)
-    (run / "_debug" / "stage_3" / "source.json").write_text(json.dumps({"folder": "chain"}))  # 3 continues 2's last frame
-    clips = [run / "videos" / f"stage_{n}.mp4" for n in (1, 2, 3)]
-    plan, drop = mt.scenario_joins(run, clips, None, "fade", 0.5)
-    assert plan == [("fade", 0.5), ("cut", 0.0)] and drop == {3}
-    plan, drop = mt.scenario_joins(run, clips, [{"transition": "dissolve", "seconds": 1}, {"transition": "fade"}], "fade", 0.5)
-    assert plan == [("dissolve", 1.0), ("fade", 0.5)] and drop == set()
-    out = mt.make_scenario(run, str(tmp_path / "out.mp4"), transition="fade", transition_seconds=0.5)
-    frames = int(subprocess.run(["ffprobe", "-v", "error", "-count_frames", "-select_streams", "v", "-show_entries",
-                                 "stream=nb_read_frames", "-of", "csv=p=0", str(out)], capture_output=True, text=True).stdout)
-    assert frames == 3 * 60 - 15 - round(30 / 24)  # one 0.5 s fade, and the chained clip's repeated first frame dropped

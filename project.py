@@ -269,7 +269,7 @@ def estimate(name, numbers):
                                             stage_duration(all_stages, s["id"], engine)["duration_value"], s.get("video_loras", {}), None,
                                             ctx.cfg.get("video_megapixels"), rife, engine, bool(s.get("audio")))
     clip_rife = lambda s: clip(s, rife=True)  # noqa: E731
-    builders = {"animate": (clip, None), "animate_rife": (clip_rife, None), "animate_chain": (clip_rife, None)}  # action -> (graph of a stage, target or None for the cloud-only clip render)
+    builders = {"animate": (clip, None), "animate_rife": (clip_rife, None)}  # action -> (graph of a stage, target or None for the cloud-only clip render)
     for (step_name, target_name), (action, _) in steps.ACTION_IDS.items():
         step, target = steps.STEPS[step_name], targets.get(target_name)
         if step.supports(target_name, ctx.engine_name):
@@ -426,62 +426,12 @@ def clip_ctx(name, src):
     return ctx
 
 
-def animate_target(a, ctx, numbers):
-    if a.target != "runpod":
-        return targets.get("cloud")
-    big = any(ctx.duration_of(n, ctx.video_engine(ctx.stages[n])) > config.RUNPOD_BIG_SECONDS for n in numbers)
-    try:
-        return targets.get("runpod", big=big, start=not a.dry_run)  # starts the pod: minutes, the log says how long
-    except targets.TargetUnavailable as e:
-        sys.exit(str(e))
-
-
-def chain_plan(ctx, src, numbers):
-    """An animate chain's stages in board order and the folder each starts from: the first from `src` (else chain/, when an
-    earlier run left its hand-off frame there), every later one from chain/ (the clip before it hands over its last frame)."""
-    order = [n for n in ctx.stages if n in numbers]
-    if len(order) < 2:
-        sys.exit("--chain needs two or more stages")
-    first = order[0]
-    if (src / f"stage_{first}.png").exists():
-        start = ctx.clip_from
-    elif (ctx.d / steps.CHAIN / f"stage_{first}.png").exists():
-        start = steps.CHAIN
-    else:
-        sys.exit(f"stage {first} starts the chain but has no {src.name}/stage_{first}.png (or {steps.CHAIN}/stage_{first}.png "
-                 f"from an earlier chain): preview and upscale it first")
-    return order, {first: start, **{n: steps.CHAIN for n in order[1:]}}
-
-
-def cmd_animate_chain(a, ctx, src, numbers):
-    """One clip after another in board order, each later stage starting on the last frame of the clip before it (steps.py
-    _hand_off); one runner pass per stage on the same target, so a 6-stage chain is one pod job. A failed clip stops it."""
-    order, inputs = chain_plan(ctx, src, numbers)
-    bad = [n for n in order if not ctx.stages[n].get("motion", "").strip()]
-    if bad:
-        sys.exit(f"stages {bad}: empty `motion` in {paths(a.name)[1]}")
-    ctx.chain_inputs, ctx.chain_next = inputs, dict(zip(order, order[1:]))
-    target = animate_target(a, ctx, order)
-    print(f"=== animate chain: {' -> '.join(map(str, order))} (stage {order[0]} from {inputs[order[0]] or 'root'}/) ===", flush=True)
-    for i, n in enumerate(order):
-        if a.dry_run and i:
-            print(f"  stage_{n}: starts on stage {order[i - 1]}'s last frame (built when the chain gets there)", flush=True)
-            continue
-        if runner.run_step(steps.STEPS["animate"], target, ctx, [n], a.dry_run):
-            rest = order[i:]
-            sys.exit(f"\nthe chain stopped at stage {n}: resume with project.py {a.name} animate {src.name} "
-                     f"{' '.join(map(str, rest))} --chain")
-
-
 def cmd_animate(a):
     """i2v clips of a folder's stills + their RIFE x2, on Comfy Cloud or the pod (steps.py animate through runner.py). No N:
-    every stage with a still and no clip yet; with N: those (the clips they replace go into their history). --chain: those
-    stages as one continuous chain (cmd_animate_chain)."""
+    every stage with a still and no clip yet; with N: those (the clips they replace go into their history)."""
     d, _ = project(a.name)
     src, only = folder_and_stages(d, a.args)
     ctx = clip_ctx(a.name, src)
-    if a.chain:
-        return cmd_animate_chain(a, ctx, src, only)
     pngs = [n for n in ctx.stages if (src / f"stage_{n}.png").exists()]  # a removed stage's leftover PNG is ignored
     unknown = [n for n in only if n not in pngs]
     if unknown:
@@ -493,7 +443,14 @@ def cmd_animate(a):
     if not todo:
         print(f"nothing to animate in {src.name}/ (every still has a clip; name stages to redo them)")
         return
-    target = animate_target(a, ctx, todo)
+    if a.target == "runpod":
+        big = any(ctx.duration_of(n, ctx.video_engine(ctx.stages[n])) > config.RUNPOD_BIG_SECONDS for n in todo)
+        try:
+            target = targets.get("runpod", big=big, start=not a.dry_run)  # starts the pod: minutes, the log says how long
+        except targets.TargetUnavailable as e:
+            sys.exit(str(e))
+    else:
+        target = targets.get("cloud")
     failed = runner.run_step(steps.STEPS["animate"], target, ctx, todo, a.dry_run)
     if failed:
         sys.exit(f"\nstages {sorted(failed)} failed (rerun to retry)")
@@ -664,8 +621,6 @@ def main():
     p.add_argument("--target", choices=("cloud", "runpod"), default=config.animate_target(),
                    help="Comfy Cloud, or our RunPod pod (started on demand; pipeline/runpod_pod.py); default: the ⚙ animate target")
     p.add_argument("--dry-run", action="store_true", help="build and check every clip graph; nothing is queued or paid (the pod isn't started)")
-    p.add_argument("--chain", action="store_true", help="the named stages as one chain in board order: the first from its still, each "
-                   f"next one from the last frame of the clip before it ({steps.CHAIN}/stage_N.png), one after another in one job")
     p = add("edit", cmd_edit)
     p.add_argument("extra", nargs=argparse.REMAINDER)
     add("status", cmd_status)
