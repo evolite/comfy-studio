@@ -41,7 +41,6 @@ LOCAL_FREE_MAX_SWAP_PCT = float(os.environ.get("LOCAL_FREE_MAX_SWAP_PCT", "40"))
 COMFYUI_SERVICE =os.environ.get("COMFYUI_SERVICE", "comfyui.service")  # systemd --user unit of the local ComfyUI
 COMFYUI_MODELS_DIR = Path(os.environ.get("COMFYUI_MODELS_DIR", "~/comfy/ComfyUI/models")).expanduser()  # the local ComfyUI's models/ (hashed for Civitai metadata)
 FILE_MANAGER = shlex.split(os.environ.get("FILE_MANAGER", "xdg-open"))  # "reveal in folder": command + the path is appended
-PUBLISH_DIR = Path(os.environ["PUBLISH_DIR"]).expanduser() if os.environ.get("PUBLISH_DIR") else None  # finished edits are copied here; unset = off
 PUSHOVER_USER = os.environ.get("PUSHOVER_USER", "")  # the web UI's 🔔 pushes here when the job queue empties; unset = off
 _token_file = ROOT / ".pushover_token"
 PUSHOVER_TOKEN = os.environ.get("PUSHOVER_TOKEN") or (_token_file.read_text().strip() if _token_file.is_file() else "")

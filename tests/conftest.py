@@ -10,7 +10,6 @@ os.environ["STUDIO_DATA_DIR"] = tempfile.mkdtemp(prefix="studio_test_")
 # a fixed test library (LoRAs, local model names) instead of defaults/, so the tests don't follow the starter set
 shutil.copytree(ROOT / "tests" / "fixtures" / "library", Path(os.environ["STUDIO_DATA_DIR"]) / "library")
 os.environ["CIVITAI_DIR"] = os.path.join(os.environ["STUDIO_DATA_DIR"], "civitai")  # .env may point these at real folders
-os.environ["PUBLISH_DIR"] = ""  # off
 os.environ["PUSHOVER_USER"] = os.environ["PUSHOVER_TOKEN"] = "test"  # tests patch jobs.send_pushover; nothing is sent
 for p in (ROOT, ROOT / "pipeline", ROOT / "video", ROOT / "webui" / "server"):
     sys.path.insert(0, str(p))

@@ -29,9 +29,6 @@ import runpod_pod  # noqa: E402
 import steps  # noqa: E402
 import targets  # noqa: E402
 
-# every finished edit is copied to config.PUBLISH_DIR when set (overwriting the previous one of the same project + source folder
-# + kind: a beat-synced and a no-music edit each keep their own copy)
-
 # how long the last edit of each kind took (edits of a kind are all about the same size) -> estimate + progress bar for the next one
 EDIT_TIMING = config.LOGS_DIR / "edit_timing.json"
 EDIT_KINDS = ("beat", "nomusic")

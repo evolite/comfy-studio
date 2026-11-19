@@ -5,8 +5,8 @@ Each lane (cloud, local, runpod) runs one job at a time, oldest first; `free` jo
 daemon reattaches to every job still marked running (wrapper alive: keep reading its log from the stored offset; gone: its
 exit code from the rc file, else failed). While a job runs, the daemon reads its log as it grows, parses it (jobs.Job.emit)
 and stores the state (at most every SAVE_EVERY s). It also kills jobs the server asked to cancel (and clears what they
-queued on the backend), submits a failed lane job again RETRY_AFTER later (up to RETRY_TIMES), copies finished edits to
-config.PUBLISH_DIR and pushes the 🔔 notification when the queue empties.
+queued on the backend), submits a failed lane job again RETRY_AFTER later (up to RETRY_TIMES) and pushes the 🔔
+notification when the queue empties.
 
     python3 webui/server/queue_daemon.py
 """
@@ -133,7 +133,6 @@ class Daemon:
         job.ended = time.time()
         if job.status == "done" and job.action == "edit":
             save_edit_timing(edit_kind(job.req), job.ended - job.started, job.frames)
-            self.publish_edit(job)
             self._read(job)
         if job.status == "failed" and job.lane in LANES and job.attempt <= RETRY_TIMES:
             job.retry_at = time.time() + RETRY_AFTER
@@ -202,24 +201,6 @@ class Daemon:
         threading.Thread(target=send_pushover, args=("Comfy Studio", msg), daemon=True).start()
 
     # --- edits and cancels (moved from the in-server manager) --------------------------------------------------------
-    @staticmethod
-    def publish_edit(job):
-        """Copy the edit this job rendered to config.PUBLISH_DIR (if set) as <project>_<folder>.mp4 (<project>.mp4 for the root;
-        a no-music edit adds _nomusic), replacing the previous one of the same kind."""
-        if not config.PUBLISH_DIR:
-            return
-        try:
-            folder = job.req.get("folder") or ""
-            made = project_dir(job.project) / folder / "edits" / job.argv[job.argv.index("--out-name") + 1]
-            suffix = "_nomusic" if edit_kind(job.req) == "nomusic" else ""
-            dst = config.PUBLISH_DIR / (f"{job.project}_{folder}{suffix}.mp4" if folder else f"{job.project}{suffix}.mp4")
-            tmp = dst.with_name(dst.name + ".part")
-            shutil.copyfile(made, tmp)
-            os.replace(tmp, dst)
-            jobstore.append_log(job.id, f"published -> {dst}")
-        except Exception as e:  # noqa: BLE001
-            jobstore.append_log(job.id, f"publish failed: {e}")
-
     def _cancel_remote(self, job):
         """Killing project.py leaves what it already queued on the backend: the job's target drops those prompts."""
         try:

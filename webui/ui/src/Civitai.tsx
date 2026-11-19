@@ -19,14 +19,14 @@ function pairOf(p: Project, id: number): Pair {
   return { id, still, clip };
 }
 
-type Result = { path: string; pairs: number; clips: number; missing_params: number[] };
+type Result = { path: string; pairs: number; clips: number; edit: string | null; missing_params: number[] };
 type Mode = "pairs" | "stills";
 type Existing = { path?: string; stages?: number[]; mtime?: number };
 
 const plural = (n: number, word: string) => `${n} ${word}${n > 1 ? "s" : ""}`;
 
 function resultLine(res: Result): string {
-  return `${plural(res.pairs, res.clips ? "pair" : "still")} → ${res.path.split("/").pop()}`;
+  return `${plural(res.pairs, res.clips ? "pair" : "still")}${res.edit ? " + the latest clip edit" : ""} → ${res.path.split("/").pop()}`;
 }
 
 function clipCaption(clip?: string): string {

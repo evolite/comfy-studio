@@ -133,6 +133,7 @@ def test_stale_clips_flag_clips_older_than_their_source():
 
 def test_civitai_post_exports_still_and_clip_pairs(monkeypatch):
     import json
+    import os
     from PIL import Image
     d = config.PIPELINES_DIR / "20261001_cv"
     (d / "hires").mkdir(parents=True)
@@ -141,20 +142,25 @@ def test_civitai_post_exports_still_and_clip_pairs(monkeypatch):
     for i in (1, 2):
         Image.new("RGB", (8, 12)).save(d / "hires" / f"stage_{i}.png")
         (d / "interp" / "videos" / f"stage_{i}.mp4").write_bytes(b"clip")
+    for rel, t in (("interp/edits/old.mp4", 100), ("cut/edits/new.mp4", 200), ("hires/edits/stills.mp4", 300)):  # a stills edit isn't a clip edit
+        (d / rel).parent.mkdir(parents=True, exist_ok=True)
+        (d / rel).write_bytes(rel.encode())
+        os.utime(d / rel, (t, t))
     monkeypatch.setattr(config, "FILE_MANAGER", ["true"])
     c = client()
     r = c.post("/api/projects/20261001_cv/civitai/post", json={"items": [{"stage": 2, "still": "hires", "clip": "interp"}, {"stage": 1, "still": "hires", "clip": "interp"}]})
     assert r.status_code == 200, r.text
     out = config.CIVITAI_DIR / r.json()["path"].split("/")[-1]
-    assert sorted(p.name for p in out.iterdir()) == ["01_stage_2.mp4", "01_stage_2.png", "02_stage_1.mp4", "02_stage_1.png", "clips.txt"]
+    assert sorted(p.name for p in out.iterdir()) == ["01_stage_2.mp4", "01_stage_2.png", "02_stage_1.mp4", "02_stage_1.png", "clips.txt", "edit_new.mp4"]
     assert (out / "01_stage_2.mp4").read_bytes() == b"clip" and r.json()["pairs"] == 2
+    assert r.json()["edit"] == "edit_new.mp4" and (out / "edit_new.mp4").read_bytes() == b"cut/edits/new.mp4"
     assert c.get("/api/projects/20261001_cv/civitai/post").json()["stages"] == [2, 1]
     (out / "notes.md").write_text("mine")
     one = {"items": [{"stage": 1, "still": "hires", "clip": "interp"}]}
     assert c.post("/api/projects/20261001_cv/civitai/post", json=one).status_code == 409  # already exported: open it or overwrite
     r = c.post("/api/projects/20261001_cv/civitai/post", json={**one, "overwrite": True})
     assert r.status_code == 200 and r.json()["path"] == str(out)
-    assert sorted(p.name for p in out.iterdir()) == ["01_stage_1.mp4", "01_stage_1.png", "clips.txt", "notes.md"]  # other files stay
+    assert sorted(p.name for p in out.iterdir()) == ["01_stage_1.mp4", "01_stage_1.png", "clips.txt", "edit_new.mp4", "notes.md"]  # other files stay
     assert c.post("/api/projects/20261001_cv/civitai/post", json={"items": []}).status_code == 400
     assert c.post("/api/projects/20261001_cv/civitai/post", json={"items": [{"stage": 1, "still": "hires", "clip": "hires"}]}).status_code == 404
 

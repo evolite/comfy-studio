@@ -434,10 +434,19 @@ def _civitai_plan_item(name: str, d, it) -> tuple:
     return sid, src, text, mp4, clip
 
 
+CLIP_EDIT_FOLDERS = ("interp", "cut")  # the clip-only folders: an edit made in one of them is a clip edit
+
+
+def _latest_clip_edit(d):
+    """The newest edit rendered from clips (<project>/interp|cut/edits/*.mp4), or None."""
+    edits = [p for f in CLIP_EDIT_FOLDERS for p in (d / f / "edits").glob("*.mp4") if p.is_file()]
+    return max(edits, key=lambda p: p.stat().st_mtime) if edits else None
+
+
 def _civitai_reset(out) -> None:
     """Overwrite: delete only the files an export writes; anything else the user put there stays."""
     for p in out.iterdir():
-        if p.is_file() and (p.name == "clips.txt" or re.fullmatch(r"\d+_stage_\d+\.(png|mp4)", p.name)):
+        if p.is_file() and (p.name == "clips.txt" or re.fullmatch(r"\d+_stage_\d+\.(png|mp4)|edit_.+\.mp4", p.name)):
             p.unlink()
 
 
@@ -458,7 +467,7 @@ def _civitai_export(out, plan, d) -> list:
 def civitai_post(name: str, body: dict = Body(...)):
     """One Civitai post's files in CIVITAI_DIR/<project>/: per item (in post order) NN_stage_N.png with the Civitai metadata next
     to NN_stage_N.mp4 (an item without "clip" exports its still alone), plus clips.txt with each clip's parameters to paste
-    (Civitai doesn't read them from video). A project that
+    (Civitai doesn't read them from video), and the newest clip edit as edit_<its name>.mp4. A project that
     was already exported is refused (409) unless overwrite: true, which replaces that folder's export files. Opens the folder."""
     d = P.project_dir(name)
     items = body.get("items") or []
@@ -474,8 +483,12 @@ def civitai_post(name: str, body: dict = Body(...)):
         out = config.CIVITAI_DIR / name
         out.mkdir(parents=True)
     notes = _civitai_export(out, plan, d)
+    edit = _latest_clip_edit(d)
+    if edit:
+        shutil.copy2(edit, out / f"edit_{edit.name}")
     subprocess.Popen([*config.FILE_MANAGER, str(out)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-    return {"path": str(out), "pairs": len(plan), "clips": len(notes), "missing_params": [sid for sid, _, text, _, _ in plan if not text]}
+    return {"path": str(out), "pairs": len(plan), "clips": len(notes), "edit": f"edit_{edit.name}" if edit else None,
+            "missing_params": [sid for sid, _, text, _, _ in plan if not text]}
 
 
 @app.get("/api/projects/{name}/civitai")
