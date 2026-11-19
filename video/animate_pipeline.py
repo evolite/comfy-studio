@@ -105,6 +105,7 @@ def add_lora_chain(graph: dict, loras: dict, engine: str = DEFAULT_ENGINE) -> No
 
 
 RIFE_SAVE = "rife:save"
+LAST_SAVE = "last:save"  # an animate-chain clip's last decoded frame, lossless: the next stage's first frame
 
 
 def add_rife(graph: dict, engine: str = DEFAULT_ENGINE) -> None:
@@ -120,6 +121,17 @@ def add_rife(graph: dict, engine: str = DEFAULT_ENGINE) -> None:
     graph[RIFE_SAVE] = {"class_type": "SaveVideo", "inputs": {**save, "video": ["rife:video", 0],
                                                               "filename_prefix": save["filename_prefix"] + "_rife"}, "_meta": {"title": "Save Video (RIFE)"}}
     del graph[e["save"]]
+
+
+def add_last_frame(graph: dict, engine: str, total: int) -> None:
+    """Save the clip's last decoded frame as a PNG (node LAST_SAVE) straight from the decoder, so an animate chain hands the next
+    clip a lossless first frame (never one grabbed from the compressed mp4)."""
+    e = engine_spec(engine)
+    frames_out = graph[e["video"]]["inputs"]["images"]
+    graph["last:pick"] = {"class_type": "ImageFromBatch", "inputs": {"image": frames_out, "batch_index": total - 1, "length": 1},
+                          "_meta": {"title": "Last frame"}}
+    graph[LAST_SAVE] = {"class_type": "SaveImage", "inputs": {"images": ["last:pick", 0], "filename_prefix": "chain/last"},
+                        "_meta": {"title": "Save last frame"}}
 
 
 # the ResolutionSelector's aspect ratios (the templates default to 2:3 portrait)
@@ -138,7 +150,8 @@ def aspect_of(png: Path) -> str:
 
 def build_graph(template: dict, image_name: str, prompt: str, duration_value: float,
                 loras: dict | None = None, seed: int | None = None, megapixels: float | None = None, rife: bool = False,
-                engine: str = DEFAULT_ENGINE, audio: bool = False, aspect: str | None = None, keyframes: list | None = None) -> dict:
+                engine: str = DEFAULT_ENGINE, audio: bool = False, aspect: str | None = None, keyframes: list | None = None,
+                last_frame: bool = False) -> dict:
     """`template` = template_for(engine, audio). `audio` only matters for an engine that always makes sound (`mute`).
     `aspect` (aspect_of(still)) sets the clip's aspect ratio; None keeps the template's.
     `keyframes` = [(uploaded image name, frame index)] anchored after the first frame (add_keyframes; MiniMax only)."""
@@ -165,6 +178,8 @@ def build_graph(template: dict, image_name: str, prompt: str, duration_value: fl
         add_keyframes(graph, keyframes, engine, frames(engine, duration_value))
     if rife:
         add_rife(graph, engine)
+    if last_frame:
+        add_last_frame(graph, engine, frames(engine, duration_value))
     return graph
 
 

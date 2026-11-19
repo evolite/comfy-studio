@@ -96,3 +96,12 @@ def test_keyframe_refs_use_the_fl2va_alignment_line_in_place_of_the_i2va_one():
     assert p.splitlines()[0] == ("How the reference pictures align with the target video \u2014 Picture 1 (from Shot 1) aligns with the "
                                  "0.00-second mark of the target video; Picture 2 (from Shot 1) aligns with the 9.96-second mark of the target video.")
     assert ap.I2VA_LINE not in p and p.endswith("integrated_multimodal_description: [Shot 1] She walks.")
+
+
+def test_last_frame_is_saved_from_the_decoder_only_when_asked():
+    for path in TEMPLATES:
+        t = json.loads(path.read_text())
+        assert ap.LAST_SAVE not in ap.build_graph(t, "img.png", "P", 5.0, rife=True)
+        g = ap.build_graph(t, "img.png", "P", 5.0, rife=True, last_frame=True)
+        assert g["last:pick"]["inputs"] == {"image": ["105:10", 0], "batch_index": ap.frames("minimax", 5.0) - 1, "length": 1}
+        assert g[ap.LAST_SAVE]["class_type"] == "SaveImage" and g[ap.LAST_SAVE]["inputs"]["images"] == ["last:pick", 0]

@@ -81,10 +81,11 @@ ACTIONS = {
     "local_new": (["generate", "--local", "--new"], "paid", "local"),  # fresh cloud preview, then the local IL pass
     **{action: (["generate", *flags], "free" if target == "local" else "paid", target)
        for (_, target), (action, flags) in steps.ACTION_IDS.items()},
-    "animate_rife": (["animate"], "paid", "cloud"),  # i2v + RIFE in the same job: <folder>/videos/ and interp/videos/
+    "animate_rife": (["animate"], "paid", "cloud"),  # i2v + RIFE in the same job -> interp/videos/
+    "animate_chain": (["animate"], "paid", "cloud"),  # the stages one after another, each from the last frame of the one before
     "edit": (["edit"], "free", "free"),
 }
-ANIMATE = ("animate_rife",)  # build_argv pins their --target (the ⚙ setting at submit time); runpod ones run in the runpod lane
+ANIMATE = ("animate_rife", "animate_chain")  # build_argv pins their --target (the ⚙ setting at submit time); runpod ones run in the runpod lane
 EVENT = "::event "  # pipeline/events.py PREFIX: a machine-readable progress line (stage status, timings, prompt ids)
 LOCAL_DEFAULT = config.LOCAL_COMFY_URL
 EDIT_FLAGS = {"audio": "--audio", "beat_times_file": "--beat-times-file", "start_time": "--start-time",
@@ -289,7 +290,8 @@ class Manager:
     @staticmethod
     def _clip_argv(action, req, folder, stages):
         """animate's arguments: the stills' folder, the stages, and the ⚙ animate target at submit time."""
-        return ([folder] if folder else []) + list(map(str, stages)) + ["--target", config.animate_target()]
+        return ([folder] if folder else []) + list(map(str, stages)) + ["--target", config.animate_target()] \
+            + (["--chain"] if action == "animate_chain" else [])
 
     @staticmethod
     def _check_motion(cfg: dict, stages: list) -> None:
@@ -385,6 +387,8 @@ class Manager:
                 flags += [flag, str(req[k])]
         if req.get("zoom"):
             flags += ["--zoom"] + ([] if req["zoom"] is True else [str(req["zoom"])])
+        if req.get("joins") and (req.get("no_music") or req.get("beat_sync") is False):  # per-join transitions: the full-length layout only
+            flags += ["--joins", json.dumps(req["joins"])]
         flags = Manager._still_flags(d, req, flags)
         flags = Manager._polaroid_flags(d, req, flags)
         flags = Manager._audio_flags(req, flags)
@@ -424,7 +428,7 @@ class Manager:
         """The web UI's armed "Start batch" (RunPod target): animate clicks, from any project, wait as `held` jobs (one per
         project, action and folder; a click on the same one adds its stages) and are released together once the ⚙ batch
         size is reached, so the whole batch shares one pod start. Released, they run one after another in the runpod lane."""
-        if action not in ANIMATE:
+        if action not in ANIMATE or action == "animate_chain":  # a chain is one job already
             raise ApiError(f"{action} can't be batched", 400)
         stages = [int(s) for s in req.get("stages") or []]
         if not stages:

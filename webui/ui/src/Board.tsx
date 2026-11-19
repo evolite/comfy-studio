@@ -26,6 +26,7 @@ export const ACTIONS: Record<string, ActionInfo> = {
   finish_local: { label: "Finish (SeedVR)", where: "local", out: "finish/", tip: "Optional SeedVR2 upscale of the upscale result on your local ComfyUI (from the folder you're reviewing, else the ✓'d one, else hires/, else IL/) → finish/stage_N.png" },
   finish: { label: "Finish (SeedVR)", where: "cloud", out: "finish/", tip: "Optional SeedVR2 upscale of the upscale result in the cloud (from the folder you're reviewing, else the ✓'d one, else hires/, else IL/) → finish/stage_N.png" },
   animate: { label: "Animate", where: "cloud", out: "videos/", tip: "Image-to-video from the stills in the chosen folder → <folder>/videos/stage_N.mp4" },
+  animate_chain: { label: "Animate chain", where: "cloud", out: "interp/videos/", tip: "The picked stages as one chain in board order, in one job: the first from its still, each next one from the last frame of the clip before it (chain/stage_N.png); later stages need only a motion" },
   animate_rife: { label: "Animate", where: "cloud", out: "interp/videos/", tip: "Image-to-video plus frame smoothing (RIFE ×2) in the same cloud job: the 24 fps clip → <folder>/videos/, the 48 fps clip straight into interp/videos/ (④ Animate)" },
   interpolate: { label: "Interpolate", where: "local", out: "videos/", tip: "RIFE frame interpolation of the folder's clips on your local ComfyUI: 24 → 48 fps, same length; the source clip stays, a redone result's old one stays under ⋯ › Previous versions" },
   generate: { label: "Full cloud run", where: "cloud", out: "root", tip: "Everything in the cloud (Krea2 + IL + upscale) → stage_N.png in the project root" },
@@ -58,6 +59,15 @@ const CIVITAI_FOLDERS = new Set(["preview", "IL", "hires", "finish"]);  // the s
 const UP_TARGETS = ["IL", "hires"];  // the upscale results (a finish starts from one of them)
 const CUT = "cut";  // trimmed clips (video/cut_clip.py), made in the Cut phase
 const INTERP = "interp";  // where the 48 fps clips land (Animate = animate_rife, or project.py interpolate): a clip-only folder, reviewed in the Animate phase
+/** An animate chain: two or more stages, all with a motion; only the first needs a still (the others start on the clip before). */
+function chainBlock(ids: number[], c: WhyCtx): string {
+  if (ids.length < 2) return "pick two or more stages";
+  const noMotion = noMotionStage(ids, c.stages);
+  if (noMotion !== undefined) return `stage ${noMotion} has no motion prompt — open its drawer and write one`;
+  const first = c.stages.map((s) => s.id).find((i) => ids.includes(i))!;
+  return c.p.folders[c.animFolder]?.stills[first] || c.p.folders["chain"]?.stills[first] ? "" : `stage ${first} starts the chain: preview and upscale it first`;
+}
+
 /** The old ④ Animate phase (24 fps clips) is gone: saved views and job links that name it open ④ Animate (the interp phase). */
 const normPhase = (v: string | null): Phase | null => (v === "animate" ? "interp" : (v as Phase | null));
 const PREVIEW_GATED = new Set(["il_cloud", "local", "face", "face_local", "hires_local", "finish", "finish_local"]);  // steps that build on an approved preview
@@ -79,7 +89,7 @@ function staleKeys(action: string, folder: string): (k: string) => boolean {
   if (["local", "il_cloud", "face", "face_local"].includes(action)) return still("IL", "finish");  // a finish may be made from IL/
   if (action === "hires_local") return still("hires", "finish");
   if (action === "finish" || action === "finish_local") return still("finish");
-  if (action === "animate" || action === "animate_rife") return (k) => k === clipKey(folder) || k === clipKey(INTERP);  // the interpolation was made from the old clip
+  if (isAnimateAction(action)) return (k) => k === clipKey(folder) || k === clipKey(INTERP);  // the interpolation was made from the old clip
   if (action === "interpolate") return (k) => k === clipKey(INTERP);
   if (action === "generate") return still("");
   return () => false;
@@ -89,7 +99,7 @@ function staleKeys(action: string, folder: string): (k: string) => boolean {
 function priorKey(action: string, folder: string): string | null {
   if (["local", "il_cloud", "hires_local"].includes(action)) return "preview";
   if (action === "finish" || action === "finish_local") return UP_TARGETS.includes(folder) ? folder : null;
-  if (action === "animate" || action === "animate_rife") return folder;
+  if (isAnimateAction(action)) return folder;
   if (action === "interpolate") return clipKey(folder);  // interpolating a clip means it is the approved one
   return null;
 }
@@ -128,7 +138,7 @@ function jobPhase(a: string, folder: string): [string, string] {
   if (["local", "il_cloud", "face", "face_local", "local_new"].includes(a)) return ["upscale", "IL"];
   if (a.startsWith("finish")) return ["finish", ""];
   if (a === "animate") return ["interp", folder];
-  if (a === "interpolate" || a === "animate_rife") return ["interp", folder];
+  if (a === "interpolate" || a === "animate_rife" || a === "animate_chain") return ["interp", folder];
   return ["all", ""];
 }
 
@@ -180,6 +190,7 @@ type RunMenuProps = {
   readonly sources: AnimSource[];
   readonly allow?: Set<string>;  // only these actions are offered (the current phase's applicable runs); undefined = all
   readonly onKeyframes?: (folder: string) => void;  // exactly 2 stages picked: one clip from the first still to the second (a new stage)
+  readonly onChain?: (folder: string) => void;  // 2+ stages picked: animate them as one chain (animate_chain)
 };
 
 type Est = { known: number; of: number; seconds: number; load: number; parallel?: boolean };
@@ -216,9 +227,10 @@ function animNote(src: AnimSource): string {
 }
 
 /** The Animate block of a Run menu: pick the source folder, then Animate (48 fps, RIFE in the same job) or Keyframes. */
-function AnimateForm({ sources, src, stages, why, batchHint, onPickSource, onRun, onKeyframes }: {
+function AnimateForm({ sources, src, stages, why, batchHint, onPickSource, onRun, onKeyframes, onChain }: {
   readonly sources: AnimSource[]; readonly src?: AnimSource; readonly stages: number; readonly why: (a: string) => string; readonly batchHint: boolean;
   readonly onPickSource: (f: string) => void; readonly onRun: (a: string, folder: string) => void; readonly onKeyframes?: (folder: string) => void;
+  readonly onChain?: (folder: string) => void;
 }) {
   const noStill = !src || src.missing.length > 0;
   return (
@@ -251,6 +263,12 @@ function AnimateForm({ sources, src, stages, why, batchHint, onPickSource, onRun
             <span className="afgo-play">▶</span>
             <span className="afgo-sub">first still → second still</span>
           </button>}
+          {onChain && stages > 1 && src && <button className="afgo keyframes" disabled={!!why("animate_chain")}
+            title={why("animate_chain") || ACTIONS.animate_chain.tip} onClick={() => onChain(src.f)}>
+            <span className="afgo-main">Animate chain</span>
+            <span className="afgo-play">▶</span>
+            <span className="afgo-sub">{stages} clips, each from the last frame</span>
+          </button>}
         </div>
       </>}
     </div>
@@ -258,7 +276,7 @@ function AnimateForm({ sources, src, stages, why, batchHint, onPickSource, onRun
 }
 
 /** One popover for every run action, grouped by pipeline step; used for the selection and for a single stage. */
-export function RunMenu({ project, ids, label, workFolder, why, onGo, sources, allow, onKeyframes }: RunMenuProps) {
+export function RunMenu({ project, ids, label, workFolder, why, onGo, sources, allow, onKeyframes, onChain }: RunMenuProps) {
   const [open, setOpen] = useState(false);
   const [pick, setPick] = useState<string | null>(null);
   const off = useHiddenActions();
@@ -292,7 +310,8 @@ export function RunMenu({ project, ids, label, workFolder, why, onGo, sources, a
             <span className="seg">{[1, 2, 4].map((n) => <button key={n} className={nTakes === n ? "on" : ""} onClick={() => setPreviewTakes(n)}>×{n}</button>)}</span>
           </div>}
           {shown("animate_rife") && <AnimateForm sources={sources} src={src} stages={ids.length} why={why} batchHint={batchHint} onPickSource={setPick} onRun={runIt}
-            onKeyframes={onKeyframes && ((f) => { setOpen(false); onKeyframes(f); })} />}
+            onKeyframes={onKeyframes && ((f) => { setOpen(false); onKeyframes(f); })}
+            onChain={onChain && ((f) => { setOpen(false); onChain(f); })} />}
         </div>
       )}
     </span>
@@ -307,7 +326,7 @@ const hasModifier = (e: KeyboardEvent) => e.metaKey || e.ctrlKey || e.altKey;
 const targetIn = (e: KeyboardEvent, sel: string) => !!(e.target as Element).closest?.(sel);
 const isReview = (phase: Phase) => phase === "animate" || phase === "interp";
 const isUpscaleStep = (phase: Phase) => phase === "upscale" || phase === "finish";
-const isAnimateAction = (a: string) => a === "animate" || a === "animate_rife";
+const isAnimateAction = (a: string) => a === "animate" || a === "animate_rife" || a === "animate_chain";
 
 /** The folder a phase works in: what its ✓ applies to and what its Run acts on. */
 function phaseFolder(phase: Phase, upTarget: string, animFolder: string): string {
@@ -349,6 +368,7 @@ function finishBlock(ids: number[], c: WhyCtx): string {
 /** Why an action can't run on these stages; "" = it can. */
 function disabledReason(a: string, ids: number[], c: WhyCtx): string {
   if (!ids.length && a !== "dry_run") return "no stages to run";
+  if (a === "animate_chain") return chainBlock(ids, c);
   if (LOCAL_ACTIONS.has(a) && c.localDown) return "local ComfyUI is down";
   if (a === "interpolate" && ids.some((i) => !c.p.folders[c.animFolder]?.clips[i])) return `needs a clip in ${c.animFolder || "root"}/videos — animate first`;
   const noMotion = isAnimateAction(a) ? noMotionStage(ids, c.stages) : undefined;
@@ -605,7 +625,7 @@ export default function Board({ name }: { readonly name: string }) {
     const f = (extra.folder as string | undefined) ?? folder;
     const onError = (e: Error) => setMsg(`error: ${e.message}`);
     // armed "Start batch" + RunPod target: animate clicks queue on the server and fire as one job at the batch size
-    if (sendFolder && batchArmed && animTarget === "runpod") {
+    if (sendFolder && action !== "animate_chain" && batchArmed && animTarget === "runpod") {
       batchAdd.mutate({ action, stages: ids, folder: f }, {
         onSuccess: (r) => {
           if (!r.job) { setMsg(`batch: ${r.pending}/${r.size} queued`); return; }  // still accumulating: nothing renders yet
@@ -738,7 +758,8 @@ export default function Board({ name }: { readonly name: string }) {
             title={bulkDoneTip(sel.size, allSelDone, folder)}
             onClick={() => { void markDone(selected, !allSelDone); clearIfSelection(selected); }}>✓</button>
           <RunMenu project={name} ids={runIds} label="Run" workFolder={folder} allow={isUpscaleStep(phase) ? allowFor(folder) : undefined} sources={animSources(p, runIds)} why={(a) => disabledWhy(a, runIds)} onGo={(a, f) => void go(a, runIds, f === undefined ? {} : { folder: f })}
-            onKeyframes={sel.size === 2 ? (f) => void keyframeClip(f) : undefined} />
+            onKeyframes={sel.size === 2 ? (f) => void keyframeClip(f) : undefined}
+            onChain={sel.size > 1 ? (f) => void go("animate_chain", allStages.map((s) => s.id).filter((i) => sel.has(i)), { folder: f }) : undefined} />
           <button className="btn" title="add a stage" onClick={() => void api(`/projects/${name}/stages`, "POST").then(() => proj.refetch())}>＋</button>
         </div>
       </div>
