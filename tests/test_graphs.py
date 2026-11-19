@@ -23,14 +23,15 @@ def test_audio_template_has_an_audio_track_and_the_plain_one_does_not():
     assert "audio" not in plain["105:91"]["inputs"]
 
 
-def test_animate_rife_interpolates_the_decoded_frames_beside_the_24fps_clip():
+def test_animate_rife_saves_only_the_interpolated_clip():
     for path, audio in ((ap.DEFAULT_TEMPLATE, None), (ap.AUDIO_TEMPLATE, ["105:205", 0])):
         plain = ap.build_graph(json.loads(path.read_text()), "img.png", "PROMPT", 2.9)
         g = ap.build_graph(json.loads(path.read_text()), "img.png", "PROMPT", 2.9, rife=True)
         assert g["rife:vfi"]["class_type"] == "RIFE VFI" and g["rife:vfi"]["inputs"]["frames"] == ["105:10", 0]
         assert g["rife:video"]["inputs"]["fps"] == 48 and g["rife:video"]["inputs"].get("audio") == audio
         assert g[ap.RIFE_SAVE]["inputs"]["video"] == ["rife:video", 0]
-        assert g["92"] == plain["92"] and g["105:91"] == plain["105:91"]  # the 24 fps clip is unchanged
+        assert "92" in plain and "92" not in g  # the 24 fps clip is never written or downloaded
+        assert [k for k, n in g.items() if n["class_type"] == "SaveVideo"] == [ap.RIFE_SAVE]
 
 
 def test_ltx_graph_patches_its_nodes_and_snaps_to_8k_plus_1():
@@ -47,6 +48,7 @@ def test_ltx_graph_patches_its_nodes_and_snaps_to_8k_plus_1():
     r = ap.build_graph(t, "img.png", "P", 2.0, rife=True, engine="ltx", audio=True)
     assert r["rife:vfi"]["inputs"]["frames"] == ["ltx:decode", 0] and r["rife:video"]["inputs"]["audio"] == ["ltx:audio_decode", 0]
     assert r[ap.RIFE_SAVE]["inputs"]["filename_prefix"] == "video/LTX23_rife"
+    assert "ltx:save" not in r
 
 
 def test_ltx_template_links_resolve():

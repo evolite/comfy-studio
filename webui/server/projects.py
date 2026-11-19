@@ -191,8 +191,8 @@ def stale_sources(d, folder, stills):
 
 
 def stale_clips(d, folder, fs):
-    """Stage ids whose clip is older than what it was made from: the folder's own still (animate reads <folder>/stage_N.png),
-    or for interp/ the source clip named in interp/_debug/stage_N/source.json."""
+    """Stage ids whose clip is older than the still it was animated from: the folder's own (animate reads <folder>/stage_N.png),
+    or for interp/ the still of the folder named in interp/_debug/stage_N/source.json."""
     out = []
     for sid, clip in fs[folder]["clips"].items():
         if folder == interpolate.FOLDER:
@@ -200,7 +200,7 @@ def stale_clips(d, folder, fs):
                 src = json.loads((d / folder / "_debug" / f"stage_{sid}" / "source.json").read_text()).get("folder", "")
             except (OSError, ValueError):
                 continue
-            made_from = fs.get(src, {}).get("clips", {}).get(sid)
+            made_from = fs.get(src, {}).get("stills", {}).get(sid)
         else:
             made_from = fs[folder]["stills"].get(sid)
         if made_from and made_from > clip + 1:  # mtimes in whole seconds; a clip saved right after its still isn't stale

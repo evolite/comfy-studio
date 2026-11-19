@@ -108,8 +108,9 @@ RIFE_SAVE = "rife:save"
 
 
 def add_rife(graph: dict, engine: str = DEFAULT_ENGINE) -> None:
-    """Animate + RIFE: interpolate the decoded frames x interpolate.MULTIPLIER in the same cloud job and save that clip too
-    (node RIFE_SAVE), with the clip's audio when the template has some. The 24 fps path (CreateVideo -> SaveVideo) is untouched."""
+    """Animate + RIFE: interpolate the decoded frames x interpolate.MULTIPLIER in the same job and save only that clip (node
+    RIFE_SAVE, with the clip's audio when the template has some): the template's 24 fps SaveVideo is dropped, so the 24 fps
+    clip is never written or downloaded."""
     e = engine_spec(engine)
     src = graph[e["video"]]["inputs"]
     graph["rife:vfi"] = {"class_type": "RIFE VFI", "inputs": interpolate.rife_inputs(src["images"]), "_meta": {"title": "RIFE VFI"}}
@@ -118,6 +119,7 @@ def add_rife(graph: dict, engine: str = DEFAULT_ENGINE) -> None:
     save = graph[e["save"]]["inputs"]
     graph[RIFE_SAVE] = {"class_type": "SaveVideo", "inputs": {**save, "video": ["rife:video", 0],
                                                               "filename_prefix": save["filename_prefix"] + "_rife"}, "_meta": {"title": "Save Video (RIFE)"}}
+    del graph[e["save"]]
 
 
 # the ResolutionSelector's aspect ratios (the templates default to 2:3 portrait)

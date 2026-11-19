@@ -436,7 +436,7 @@ def cmd_animate(a):
     unknown = [n for n in only if n not in pngs]
     if unknown:
         sys.exit(f"stages {unknown}: no {src.name}/stage_N.png (or not in project.json) to animate")
-    todo = [n for n in pngs if (n in only if only else not (src / "videos" / f"stage_{n}.mp4").exists())]
+    todo = [n for n in pngs if (n in only if only else not (d / steps.rife.FOLDER / "videos" / f"stage_{n}.mp4").exists())]
     bad = [n for n in todo if not ctx.stages[n].get("motion", "").strip()]
     if bad:
         sys.exit(f"stages {bad}: empty `motion` in {paths(a.name)[1]}")

@@ -67,7 +67,7 @@ function wantSlot(phase: Phase, folder: string, f: string, kind: "still" | "clip
   if (phase === "preview") return f === "preview" && kind === "still";
   if (phase === "upscale") return kind === "still" && (f === "preview" || f === folder);
   if (phase === "finish") return kind === "still" && (f === "finish" || UP_TARGETS.includes(f));  // the finish, plus the upscales it is made from
-  if (phase === "interp") return kind === "clip" && (f === INTERP || f === clipFrom);  // the interpolated clip, plus the clip it was made from
+  if (phase === "interp") return kind === "clip" && f === INTERP;  // the 48 fps clip (animate saves no 24 fps one)
   if (phase === "cut") return kind === "clip" && f === CUT;  // the cut result; its source plays in the CutEditor
   return f === folder;  // animate: the source folder's clip, plus its still for reference
 }
@@ -845,7 +845,7 @@ function SlotFigure({ p, sid, slot, phase, doneKey, isNew, onOpen }: { readonly 
       </button>
       <figcaption>{f || "root"}
         {kind === "still" && fs?.stale?.includes(sid) && <span className="pill warn" title="made from a preview take that is no longer current">⚠</span>}
-        {kind === "clip" && fs?.stale_clips?.includes(sid) && <span className="pill warn" title={f === INTERP ? "made from an older clip: the source clip was re-rendered since" : "made from an older still: the still was re-rendered since — re-animate to update"}>⚠</span>}
+        {kind === "clip" && fs?.stale_clips?.includes(sid) && <span className="pill warn" title={f === INTERP ? "made from an older still: the still was re-rendered since — re-animate to update" : "made from an older still: the still was re-rendered since — re-animate to update"}>⚠</span>}
       </figcaption>
       <button className="btn sm reveal" title="open in folder" onClick={(e) => { e.stopPropagation(); void api(`/projects/${p.name}/reveal`, "POST", { path: slotPath(f, kind, sid) }); }}>📂</button>
     </figure>

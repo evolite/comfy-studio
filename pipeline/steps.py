@@ -198,28 +198,24 @@ def _save_video(ctx, src: Path, dest: Path) -> Path:
 
 
 def _note_rife_source(ctx, n):
-    """interp/_debug/stage_N/source.json: which folder's clip the interpolated one was made from (stale-clip check)."""
+    """interp/_debug/stage_N/source.json: which folder's still the clip was animated from (stale-clip check)."""
     d = ctx.d / rife.FOLDER / "_debug" / f"stage_{n}"
     d.mkdir(parents=True, exist_ok=True)
     (d / "source.json").write_text(json.dumps({"folder": _clip_from(ctx)}, indent=2) + "\n")
 
 
 def _save_clip(ctx, job, out):
-    """The clip -> <folder>/videos/stage_N.mp4 (+ its render settings in _debug), its 48 fps RIFE one -> interp/videos/."""
+    """The 48 fps RIFE clip -> interp/videos/stage_N.mp4 (+ its render settings in _debug); the 24 fps one is not rendered out."""
     engine = ctx.video_engine(job.stage)
     e = clips.engine_spec(engine)
-    files = dict(job.outputs)
     seed_node, seed_field = e["seed"]
     (job.debug_dir / "render_settings.json").write_text(json.dumps(
         {"engine": engine, "loras": job.stage.get("video_loras", {}), "seed": job.graph[seed_node]["inputs"][seed_field],
          "audio": bool(job.stage.get("audio")), "rife": True}, indent=2))
-    if clips.RIFE_SAVE not in files:
-        raise RuntimeError(f"no RIFE clip among the outputs -- check {job.debug_dir}")
-    dest = _save_video(ctx, job.final, out / "videos" / f"stage_{job.n}.mp4")
-    rdest = _save_video(ctx, files[clips.RIFE_SAVE], ctx.d / rife.FOLDER / "videos" / f"stage_{job.n}.mp4")
+    rdest = _save_video(ctx, job.final, ctx.d / rife.FOLDER / "videos" / f"stage_{job.n}.mp4")
     _note_rife_source(ctx, job.n)
     print(f"  [{job.tag}] -> {rdest} (RIFE x{rife.MULTIPLIER})", flush=True)
-    return dest
+    return rdest
 
 
 STEPS = {s.name: s for s in [
@@ -240,8 +236,8 @@ STEPS = {s.name: s for s in [
                                                           t.params.get("seedvr_model"), t.params.get("seedvr_color")),
          lambda c: ("436", {"436": "final"}), needs=finish_source, suffix="finish",
          needs_hint="run an upscale first (IL: project.py {name} generate {stages} --local; latent: ... --hires --local)"),
-    Step("animate", _clip_from, _animate_graph, lambda c: (clips.engine_spec(clips.DEFAULT_ENGINE)["save"], {}), needs=_clip_from,
-         targets=("cloud", "runpod"), final_for=lambda c, s: clips.engine_spec(c.video_engine(s))["save"], keep=(clips.RIFE_SAVE,),
+    Step("animate", _clip_from, _animate_graph, lambda c: (clips.RIFE_SAVE, {}), needs=_clip_from,
+         targets=("cloud", "runpod"),
          debug_prefix="i2v_", suffix="animate", save=_save_clip,
          needs_hint="no still to animate: make it first, or name the folder it is in"),
 ]}
